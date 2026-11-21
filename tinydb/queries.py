@@ -16,6 +16,7 @@ True
 False
 """
 
+import operator
 import re
 from collections.abc import Mapping, Callable, Sequence
 from typing import Any, Union, Optional, Protocol
@@ -30,6 +31,17 @@ def is_sequence(obj):
     # are strings should not match any/all as if they were char lists (#638).
     return isinstance(obj, Sequence) and not isinstance(obj, (str, bytes,
                                                               bytearray))
+
+
+def _safe_compare(compare, rhs):
+    # Values that cannot be compared with ``rhs`` simply don't match.
+    def test(value):
+        try:
+            return compare(value, rhs)
+        except TypeError:
+            return False
+
+    return test
 
 
 class QueryLike(Protocol):
@@ -286,7 +298,7 @@ class Query(QueryInstance):
         :param rhs: The value to compare against
         """
         return self._generate_test(
-            lambda value: value < rhs,
+            _safe_compare(operator.lt, rhs),
             ('<', self._path, rhs)
         )
 
@@ -299,7 +311,7 @@ class Query(QueryInstance):
         :param rhs: The value to compare against
         """
         return self._generate_test(
-            lambda value: value <= rhs,
+            _safe_compare(operator.le, rhs),
             ('<=', self._path, rhs)
         )
 
@@ -312,7 +324,7 @@ class Query(QueryInstance):
         :param rhs: The value to compare against
         """
         return self._generate_test(
-            lambda value: value > rhs,
+            _safe_compare(operator.gt, rhs),
             ('>', self._path, rhs)
         )
 
@@ -325,7 +337,7 @@ class Query(QueryInstance):
         :param rhs: The value to compare against
         """
         return self._generate_test(
-            lambda value: value >= rhs,
+            _safe_compare(operator.ge, rhs),
             ('>=', self._path, rhs)
         )
 
