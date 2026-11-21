@@ -55,6 +55,24 @@ def set(field: str, val: Any) -> Callable[[MutableMapping], None]:
     return transform
 
 
+def append(field: str, val: Any) -> Callable[[MutableMapping], None]:
+    """
+    Append ``val`` to the list in a given field.
+
+    Creates the list if the field is missing. Raises ``TypeError`` if the
+    field exists but is not a list.
+    """
+    def transform(doc: MutableMapping):
+        if field not in doc:
+            doc[field] = [val]
+        elif isinstance(doc[field], list):
+            doc[field].append(val)
+        else:
+            raise TypeError(f'field {field!r} is not a list')
+
+    return transform
+
+
 def increment(field: str) -> Callable[[MutableMapping], None]:
     """
     Increment a given field in the document by 1.
