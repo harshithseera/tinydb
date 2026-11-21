@@ -16,6 +16,7 @@ True
 False
 """
 
+import operator
 import re
 from collections.abc import Mapping, Callable, Sequence
 from typing import Any, Union, Optional, Protocol
@@ -23,6 +24,15 @@ from typing import Any, Union, Optional, Protocol
 from .utils import freeze
 
 __all__ = ('Query', 'QueryLike', 'where')
+
+
+def _ordering_test(op, value, rhs):
+    # Values that cannot be ordered against ``rhs`` simply do not match.
+    # Note: ``~(Query().f < x)`` therefore matches such documents.
+    try:
+        return op(value, rhs)
+    except TypeError:
+        return False
 
 
 def is_sequence(obj):
@@ -286,7 +296,7 @@ class Query(QueryInstance):
         :param rhs: The value to compare against
         """
         return self._generate_test(
-            lambda value: value < rhs,
+            lambda value: _ordering_test(operator.lt, value, rhs),
             ('<', self._path, rhs)
         )
 
@@ -299,7 +309,7 @@ class Query(QueryInstance):
         :param rhs: The value to compare against
         """
         return self._generate_test(
-            lambda value: value <= rhs,
+            lambda value: _ordering_test(operator.le, value, rhs),
             ('<=', self._path, rhs)
         )
 
@@ -312,7 +322,7 @@ class Query(QueryInstance):
         :param rhs: The value to compare against
         """
         return self._generate_test(
-            lambda value: value > rhs,
+            lambda value: _ordering_test(operator.gt, value, rhs),
             ('>', self._path, rhs)
         )
 
@@ -325,7 +335,7 @@ class Query(QueryInstance):
         :param rhs: The value to compare against
         """
         return self._generate_test(
-            lambda value: value >= rhs,
+            lambda value: _ordering_test(operator.ge, value, rhs),
             ('>=', self._path, rhs)
         )
 
