@@ -1,0 +1,136 @@
+diff --git a/tests/test_autose_issue.py b/tests/test_autose_issue.py
+new file mode 100644
+index 0000000..8da5d06
+--- /dev/null
++++ b/tests/test_autose_issue.py
+@@ -0,0 +1,46 @@
++from tinydb import TinyDB, Query
++from tinydb.storages import MemoryStorage
++
++
++def _make_db():
++    db = TinyDB(storage=MemoryStorage)
++    db.insert({'name': 'theme', 'value': 'light'})
++    return db
++
++
++def test_ac1_mutating_search_result_does_not_affect_next_search():
++    db = _make_db()
++    Setting = Query()
++    result = db.search(Setting.name == 'theme')
++    result[0]['value'] = 'dark'
++    assert db.search(Setting.name == 'theme') == [
++        {'name': 'theme', 'value': 'light'}
++    ]
++
++
++def test_ac2_mutating_search_result_does_not_affect_all():
++    db = _make_db()
++    Setting = Query()
++    result = db.search(Setting.name == 'theme')
++    result[0]['value'] = 'dark'
++    assert db.all() == [{'name': 'theme', 'value': 'light'}]
++
++
++def test_ac3_cached_results_are_distinct_copies():
++    db = _make_db()
++    Setting = Query()
++    db.search(Setting.name == 'theme')
++    second = db.search(Setting.name == 'theme')
++    second[0]['value'] = 'dark'
++    third = db.search(Setting.name == 'theme')
++    assert third[0]['value'] == 'light'
++    assert third[0] is not second[0]
++
++
++def test_ac4_update_still_persists_after_local_mutation():
++    db = _make_db()
++    Setting = Query()
++    result = db.search(Setting.name == 'theme')
++    result[0]['value'] = 'dark'
++    db.update({'value': 'dark'}, Setting.name == 'theme')
++    assert db.search(Setting.name == 'theme')[0]['value'] == 'dark'
+diff --git a/tests/test_tinydb.py b/tests/test_tinydb.py
+index 9ff866f..4d6fe73 100644
+--- a/tests/test_tinydb.py
++++ b/tests/test_tinydb.py
+@@ -729,10 +729,8 @@ def test_query_cache():
+     assert db.search(query) == [{'name': 'foo', 'value': 42}]
+ 
+ 
+-def test_query_cache_documents_are_shared_with_cache():
+-    """search() returns a fresh list each call, but its documents are the
+-    same objects the cache holds (see the docstring): the list itself can
+-    be mutated freely, the documents inside it cannot."""
++def test_query_cache_documents_are_not_shared_with_cache():
++    """search() returns copies, so mutating results never reaches the cache."""
+     db = TinyDB(storage=MemoryStorage)
+     db.insert({'name': 'Alice', 'tags': ['a', 'b']})
+ 
+@@ -746,11 +744,10 @@ def test_query_cache_documents_are_shared_with_cache():
+     results2 = db.search(query)
+     assert results2 == [{'name': 'Alice', 'tags': ['a', 'b']}]
+ 
+-    # But a document inside it is the cached object, so mutating a
+-    # top-level key or a nested value both reach the cache.
++    # Mutating a nested value of a returned document doesn't reach the cache.
+     results2[0]['tags'].append('c')
+     results3 = db.search(query)
+-    assert results3[0]['tags'] == ['a', 'b', 'c']
++    assert results3[0]['tags'] == ['a', 'b']
+ 
+ 
+ def test_tinydb_is_iterable(db: TinyDB):
+diff --git a/tinydb/table.py b/tinydb/table.py
+index 76470aa..52d9ab8 100644
+--- a/tinydb/table.py
++++ b/tinydb/table.py
+@@ -4,6 +4,7 @@ data in TinyDB.
+ """
+ 
+ from collections.abc import Callable, Iterable, Iterator, Mapping, MutableMapping
++from copy import deepcopy
+ from typing import (
+     NoReturn,
+     Optional,
+@@ -251,10 +252,8 @@ class Table:
+         Search for all documents matching a 'where' cond.
+ 
+         Note: a repeated search with the same ``cond`` is served from an
+-        internal cache. The returned list is a fresh copy, but its
+-        documents are the same objects held by the cache -- treat them as
+-        read-only, since mutating one (a key or a nested value) corrupts
+-        what a later identical search returns.
++        internal cache. The returned documents are copies owned by the
++        caller, so mutating them does not affect later searches.
+ 
+         :param cond: the condition to check against
+         :returns: list of matching documents
+@@ -264,7 +263,7 @@ class Table:
+         # query
+         cached_results = self._query_cache.get(cond)
+         if cached_results is not None:
+-            return cached_results[:]
++            return self._copy_docs(cached_results)
+ 
+         # Perform the search by applying the query to all documents.
+         # Then, only if the document matches the query, convert it
+@@ -292,10 +291,17 @@ class Table:
+                                                    lambda: True)
+         if is_cacheable():
+             # Update the query cache
+-            self._query_cache[cond] = docs[:]
++            self._query_cache[cond] = self._copy_docs(docs)
+ 
+         return docs
+ 
++    @staticmethod
++    def _copy_docs(docs: Iterable[Document]) -> list[Document]:
++        """
++        Return deep copies of the given documents (``doc_id`` is preserved).
++        """
++        return [deepcopy(doc) for doc in docs]
++
+     @overload
+     def get(self) -> NoReturn: ...
+ 
