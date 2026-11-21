@@ -12,8 +12,10 @@ Current code diff against master:
 {{diff}}
 </diff>
 
-Write exactly one pytest test per acceptance criterion, in a new file `tests/test_autose_issue.py` (or add to an existing test module if clearly better). Test function names MUST be: {{names}}. Each test must exercise TinyDB's public API (use `TinyDB(storage=MemoryStorage)` or `tmp_path` for files) and assert the "Then" of its criterion.
+Write exactly one pytest test per acceptance criterion, in a new file `tests/test_autose_issue.py` (or add to an existing test module if clearly better). Test function names MUST be: {{names}}. Each test must exercise TinyDB's public API (use `TinyDB(storage=MemoryStorage)` or `tmp_path` for files) and assert the "Then" of its criterion. Never start pytest or other subprocesses from a test.
 
 Run `python -m pytest -p no:cacheprovider -q --no-cov` to see the full suite. If a test fails because the implementation is wrong, you may fix the implementation under `tinydb/`; do not weaken a test to make it pass, and do not edit or delete existing tests. Never touch `.github/`, `autose_agent/` or `.autose/`.
 
 When done, reply with one line: `tests written`.
+
+Run each shell command on its own: no `cd`, `&&`, `;` or pipes, because only plain `python -m pytest ...` and `python -c "..."` commands are permitted.

@@ -30,6 +30,6 @@ AC-2: ...
 None
 ```
 
-Rules for the acceptance criteria: 2–5 criteria, one per line, each starting `AC-<n>: Given ... When ... Then ...`, each checkable by a single automated pytest test against TinyDB's public API. Include one criterion stating that existing behaviour/tests keep working if relevant. Write `None` under Blocking open questions if there are none.
+Rules for the acceptance criteria: 2–5 criteria, one per line, each starting `AC-<n>: Given ... When ... Then ...`, each checkable by a single automated pytest test against TinyDB's public API. Do not write a criterion about the existing test suite: the pipeline always runs the full suite separately. Write `None` under Blocking open questions if there are none.
 
 Do not edit any other file. When done, reply with one line: `spec written`.

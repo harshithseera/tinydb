@@ -34,3 +34,5 @@ VERDICT: <approve|changes-code|changes-approach>
 ```
 
 Use `changes-approach` if the overall design is wrong (wrong place, wrong API, misread issue), `changes-code` for fixable bugs or missing tests, `approve` only if you found no blocking finding and every checklist item is checked. Every finding needs `path:line` and evidence.
+
+Run each shell command on its own: no `cd`, `&&`, `;` or pipes, because only plain `python -m pytest ...` and `python -c "..."` commands are permitted.

@@ -23,3 +23,5 @@ Implement the design by editing files under `tinydb/` (and `docs/` if useful). R
 - Do not write the acceptance tests yet (the next stage does), but do fix existing tests only if the spec explicitly changes the behaviour they check.
 
 When done, reply with a 2-3 line summary of what you changed.
+
+Run each shell command on its own: no `cd`, `&&`, `;` or pipes, because only plain `python -m pytest ...` and `python -c "..."` commands are permitted.

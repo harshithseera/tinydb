@@ -1,0 +1,52 @@
+# Review-only trigger, used for seeded PRs and decision experiments (experiment/variants.md).
+# Comment on a PR:  /autose-review            (default reviewer, ADR-008)
+#                   /autose-review variant=with-claims | variant=plain
+name: autose-review
+on:
+  issue_comment:
+    types: [created]
+permissions: {}
+concurrency:
+  group: autose-review-${{ github.event.issue.number }}
+  cancel-in-progress: false
+jobs:
+  review:
+    if: >-
+      github.event.issue.pull_request &&
+      startsWith(github.event.comment.body, '/autose-review') &&
+      contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - id: pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          NUM: ${{ github.event.issue.number }}
+          BODY: ${{ github.event.comment.body }}
+        run: |
+          ref=$(gh api "repos/$REPO/pulls/$NUM" --jq .head.ref)
+          issue=$(echo "$ref" | sed -nE 's/.*issue-([0-9]+).*/\1/p')
+          [ -n "$issue" ] || issue=$(gh api "repos/$REPO/pulls/$NUM" --jq .body | sed -nE 's/.*(Fixes|Closes) #([0-9]+).*/\2/p' | head -1)
+          [[ "$issue" =~ ^[0-9]+$ ]] || { echo "cannot find linked issue"; exit 1; }
+          variant=$(echo "$BODY" | sed -nE 's/.*variant=(default|with-claims|plain).*/\1/p')
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+          echo "issue=$issue" >> "$GITHUB_OUTPUT"
+          echo "variant=${variant:-default}" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v4
+        with: { ref: master, path: ctl, persist-credentials: false }
+      - uses: ./ctl/.github/actions/autose-setup
+        with: { ref: "${{ steps.pr.outputs.ref }}" }
+      - name: Independent review (review.py)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          ISSUE: ${{ steps.pr.outputs.issue }}
+          PR: ${{ github.event.issue.number }}
+          VARIANT: ${{ steps.pr.outputs.variant }}
+        run: python ctl/autose_agent/review.py --issue "$ISSUE" --pr "$PR" --round 1 --variant "$VARIANT" --out "$RUNNER_TEMP/review"
+      - uses: actions/upload-artifact@v4
+        with: { name: "review-pr${{ github.event.issue.number }}-${{ steps.pr.outputs.variant }}", path: "${{ runner.temp }}/review" }
