@@ -1,0 +1,86 @@
+diff --git a/docs/usage.rst b/docs/usage.rst
+index 9d61f5c..46a775d 100644
+--- a/docs/usage.rst
++++ b/docs/usage.rst
+@@ -223,6 +223,9 @@ Let's review the query operations we've learned:
+ +-------------------------------------+---------------------------------------------------------------------+
+ | ``Query().field.exists()``          | Match any document where a field called ``field`` exists            |
+ +-------------------------------------+---------------------------------------------------------------------+
++| ``Query().field.between(low, high)``| Match any document where ``field`` is between ``low`` and ``high``  |
++|                                     | (both inclusive)                                                    |
+++-------------------------------------+---------------------------------------------------------------------+
+ | ``Query().field.matches(regex)``    | Match any document with the whole field matching the                |
+ |                                     | regular expression                                                  |
+ +-------------------------------------+---------------------------------------------------------------------+
+diff --git a/tests/test_autose_issue.py b/tests/test_autose_issue.py
+new file mode 100644
+index 0000000..a7dc468
+--- /dev/null
++++ b/tests/test_autose_issue.py
+@@ -0,0 +1,35 @@
++from tinydb import TinyDB, Query
++from tinydb.storages import MemoryStorage
++
++
++def _db():
++    return TinyDB(storage=MemoryStorage)
++
++
++def test_ac1_between_numbers_inclusive():
++    db = _db()
++    db.insert_multiple([{'age': a} for a in (17, 18, 25, 30, 31)])
++    res = db.search(Query().age.between(18, 30))
++    assert sorted(d['age'] for d in res) == [18, 25, 30]
++
++
++def test_ac2_between_date_strings():
++    db = _db()
++    dates = ['2024-03-14', '2024-03-15', '2024-03-20', '2024-04-01']
++    db.insert_multiple([{'date': d} for d in dates])
++    res = db.search(Query().date.between('2024-03-15', '2024-03-31'))
++    assert sorted(d['date'] for d in res) == ['2024-03-15', '2024-03-20']
++
++
++def test_ac3_between_missing_field_not_returned():
++    db = _db()
++    db.insert_multiple([{'age': 20}, {'name': 'noage'}])
++    res = db.search(Query().age.between(0, 100))
++    assert res == [{'age': 20}]
++
++
++def test_ac4_between_incomparable_type_not_returned():
++    db = _db()
++    db.insert_multiple([{'age': 'x'}, {'age': 20}])
++    res = db.search(Query().age.between(18, 30))
++    assert res == [{'age': 20}]
+diff --git a/tinydb/queries.py b/tinydb/queries.py
+index e106c5d..969541a 100644
+--- a/tinydb/queries.py
++++ b/tinydb/queries.py
+@@ -329,6 +329,26 @@ class Query(QueryInstance):
+             ('>=', self._path, rhs)
+         )
+ 
++    def between(self, low: Any, high: Any) -> QueryInstance:
++        """
++        Test a dict value for being between two values (both inclusive).
++
++        >>> Query().f1.between(18, 30)
++
++        :param low: The lower bound
++        :param high: The upper bound
++        """
++        def test(value):
++            try:
++                return low <= value <= high
++            except TypeError:
++                return False
++
++        return self._generate_test(
++            test,
++            ('between', self._path, freeze(low), freeze(high))
++        )
++
+     def exists(self) -> QueryInstance:
+         """
+         Test for a dict where a provided key exists.
