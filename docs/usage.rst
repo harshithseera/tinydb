@@ -677,7 +677,7 @@ CachingMiddleware
 
 The ``CachingMiddleware`` improves speed by reducing disk I/O. It caches all
 read operations and writes data to disk after a configured number of
-write operations.
+write operations. Use it if TinyDB feels slow on a large database.
 
 To make sure that all data is safely written when closing the table, use one
 of these ways:

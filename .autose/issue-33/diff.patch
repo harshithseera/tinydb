@@ -1,0 +1,181 @@
+diff --git a/docs/usage.rst b/docs/usage.rst
+index 9d61f5c..15bd775 100644
+--- a/docs/usage.rst
++++ b/docs/usage.rst
+@@ -677,7 +677,7 @@ CachingMiddleware
+ 
+ The ``CachingMiddleware`` improves speed by reducing disk I/O. It caches all
+ read operations and writes data to disk after a configured number of
+-write operations.
++write operations. Use it if TinyDB feels slow on a large database.
+ 
+ To make sure that all data is safely written when closing the table, use one
+ of these ways:
+diff --git a/tests/test_autose_issue.py b/tests/test_autose_issue.py
+new file mode 100644
+index 0000000..0ac47f8
+--- /dev/null
++++ b/tests/test_autose_issue.py
+@@ -0,0 +1,64 @@
++from tinydb import TinyDB, where
++from tinydb.storages import MemoryStorage
++
++
++class CountingStorage(MemoryStorage):
++    def __init__(self):
++        super().__init__()
++        self.reads = 0
++        self.writes = 0
++
++    def read(self):
++        self.reads += 1
++        return super().read()
++
++    def write(self, data):
++        self.writes += 1
++        super().write(data)
++
++
++def _db(n=1000):
++    db = TinyDB(storage=CountingStorage)
++    db.insert_multiple({'n': i} for i in range(n))
++    return db
++
++
++def test_ac1_update_single_write():
++    db = _db()
++    s = db.storage
++    s.writes = 0
++    db.update({'x': 1}, where('n') > 10)
++    assert s.writes == 1
++    for doc in db.all():
++        if doc['n'] > 10:
++            assert doc['x'] == 1
++
++
++def test_ac2_repeated_search_uses_cache():
++    db = _db()
++    s = db.storage
++    first = db.search(where('n') == 5)
++    s.reads = 0
++    second = db.search(where('n') == 5)
++    assert s.reads == 0
++    assert first == second
++
++
++def test_ac3_insert_multiple_single_write():
++    db = _db(10)
++    s = db.storage
++    s.writes = 0
++    db.insert_multiple({'n': i} for i in range(500))
++    assert s.writes == 1
++    assert len(db) == 510
++
++
++def test_ac4_cache_not_stale():
++    db = _db(20)
++    q = where('n') == 5
++    assert len(db.search(q)) == 1
++    db.update({'n': 100}, q)
++    assert db.search(q) == []
++    assert len(db.search(where('n') == 100)) == 1
++    db.remove(where('n') == 100)
++    assert db.search(where('n') == 100) == []
+diff --git a/tests/test_tables.py b/tests/test_tables.py
+index a94005e..4afc8b2 100644
+--- a/tests/test_tables.py
++++ b/tests/test_tables.py
+@@ -123,6 +123,9 @@ def test_lru_cache(db):
+     # Test integration into TinyDB
+     table = db.table('table3', cache_size=2)
+     query = where('int') == 1
++    # A removal that matches nothing no longer clears the cache, so the
++    # table needs a document that the removal below really deletes
++    table.insert({'int': 1})
+ 
+     table.search(query)
+     table.search(where('int') == 2)
+diff --git a/tinydb/table.py b/tinydb/table.py
+index 76470aa..eba20a3 100644
+--- a/tinydb/table.py
++++ b/tinydb/table.py
+@@ -472,6 +472,8 @@ class Table:
+                 updated_ids.extend(
+                     doc_id for doc_id in requested_ids if doc_id in table
+                 )
++                if not updated_ids:
++                    return False
+                 for doc_id in updated_ids:
+                     perform_update(table, doc_id)
+ 
+@@ -504,6 +506,9 @@ class Table:
+                         # Perform the update (see above)
+                         perform_update(table, doc_id)
+ 
++                if not updated_ids:
++                    return False
++
+             # Perform the update operation (see _update_table for details)
+             self._update_table(updater)
+ 
+@@ -523,6 +528,9 @@ class Table:
+                     # Perform the update (see above)
+                     perform_update(table, doc_id)
+ 
++                if not updated_ids:
++                    return False
++
+             # Perform the update operation (see _update_table for details)
+             self._update_table(updater)
+ 
+@@ -575,6 +583,9 @@ class Table:
+                         # Perform the update (see above)
+                         perform_update(fields, table, doc_id)
+ 
++            if not updated_ids:
++                return False
++
+         # Perform the update operation (see _update_table for details)
+         self._update_table(updater)
+ 
+@@ -655,6 +666,8 @@ class Table:
+                 removed_ids.extend(
+                     doc_id for doc_id in requested_ids if doc_id in table
+                 )
++                if not removed_ids:
++                    return False
+                 for doc_id in removed_ids:
+                     del table[doc_id]
+ 
+@@ -688,6 +701,9 @@ class Table:
+                         # Remove document from the table
+                         table.pop(doc_id)
+ 
++                if not removed_ids:
++                    return False
++
+             # Perform the remove operation
+             self._update_table(updater)
+ 
+@@ -813,6 +829,9 @@ class Table:
+ 
+         As a further optimization, we don't convert the documents into the
+         document class, as the table data will *not* be returned to the user.
++
++        If the updater returns ``False`` it signals that nothing was changed,
++        so the data is not written back and the query cache is kept.
+         """
+ 
+         tables = self._storage.read()
+@@ -837,7 +856,10 @@ class Table:
+         }
+ 
+         # Perform the table update operation
+-        updater(table)
++        if updater(table) is False:
++            # The updater reported that it changed nothing: skip the
++            # (expensive) write and keep the query cache
++            return
+ 
+         # Convert the document IDs back to strings.
+         # This is required as some storages (most notably the JSON file format)
