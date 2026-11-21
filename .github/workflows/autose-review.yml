@@ -6,9 +6,7 @@ on:
   issue_comment:
     types: [created]
 permissions: {}
-concurrency:
-  group: autose-review-${{ github.event.issue.number }}
-  cancel-in-progress: false
+# No concurrency group: reviews are read-only and variants must not cancel each other.
 jobs:
   review:
     if: >-
