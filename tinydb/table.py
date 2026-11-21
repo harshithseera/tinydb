@@ -472,6 +472,8 @@ class Table:
                 updated_ids.extend(
                     doc_id for doc_id in requested_ids if doc_id in table
                 )
+                if not updated_ids:
+                    return False
                 for doc_id in updated_ids:
                     perform_update(table, doc_id)
 
@@ -504,6 +506,9 @@ class Table:
                         # Perform the update (see above)
                         perform_update(table, doc_id)
 
+                if not updated_ids:
+                    return False
+
             # Perform the update operation (see _update_table for details)
             self._update_table(updater)
 
@@ -522,6 +527,9 @@ class Table:
 
                     # Perform the update (see above)
                     perform_update(table, doc_id)
+
+                if not updated_ids:
+                    return False
 
             # Perform the update operation (see _update_table for details)
             self._update_table(updater)
@@ -574,6 +582,9 @@ class Table:
 
                         # Perform the update (see above)
                         perform_update(fields, table, doc_id)
+
+            if not updated_ids:
+                return False
 
         # Perform the update operation (see _update_table for details)
         self._update_table(updater)
@@ -655,6 +666,8 @@ class Table:
                 removed_ids.extend(
                     doc_id for doc_id in requested_ids if doc_id in table
                 )
+                if not removed_ids:
+                    return False
                 for doc_id in removed_ids:
                     del table[doc_id]
 
@@ -687,6 +700,9 @@ class Table:
 
                         # Remove document from the table
                         table.pop(doc_id)
+
+                if not removed_ids:
+                    return False
 
             # Perform the remove operation
             self._update_table(updater)
@@ -813,6 +829,9 @@ class Table:
 
         As a further optimization, we don't convert the documents into the
         document class, as the table data will *not* be returned to the user.
+
+        If the updater returns ``False`` it signals that nothing was changed,
+        so the data is not written back and the query cache is kept.
         """
 
         tables = self._storage.read()
@@ -837,7 +856,10 @@ class Table:
         }
 
         # Perform the table update operation
-        updater(table)
+        if updater(table) is False:
+            # The updater reported that it changed nothing: skip the
+            # (expensive) write and keep the query cache
+            return
 
         # Convert the document IDs back to strings.
         # This is required as some storages (most notably the JSON file format)

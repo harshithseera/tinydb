@@ -123,6 +123,9 @@ def test_lru_cache(db):
     # Test integration into TinyDB
     table = db.table('table3', cache_size=2)
     query = where('int') == 1
+    # A removal that matches nothing no longer clears the cache, so the
+    # table needs a document that the removal below really deletes
+    table.insert({'int': 1})
 
     table.search(query)
     table.search(where('int') == 2)
