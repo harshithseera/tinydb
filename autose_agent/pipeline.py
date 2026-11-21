@@ -64,7 +64,9 @@ class Run:
 
     def code_diff(self, name_only=False):
         self.git("add", "-A")
-        args = ["diff", "--cached", "origin/master"]
+        # Diff against the merge-base so later commits on master are not counted as ours.
+        base = self.git("merge-base", "origin/master", "HEAD").stdout.strip()
+        args = ["diff", "--cached", base]
         if name_only:
             args.append("--name-only")
         args += ["--", ".", ":(exclude).autose"]
