@@ -1,0 +1,91 @@
+diff --git a/docs/usage.rst b/docs/usage.rst
+index 9d61f5c..b9186a0 100644
+--- a/docs/usage.rst
++++ b/docs/usage.rst
+@@ -315,6 +315,8 @@ with these operations:
+ - ``add(key, value)``: add ``value`` to the value of a key (also works for strings)
+ - ``subtract(key, value)``: subtract ``value`` from the value of a key
+ - ``set(key, value)``: set ``key`` to ``value``
++- ``append(key, value)``: append ``value`` to the list in ``key`` (creates a
++  new list if the key is missing, raises ``TypeError`` if it is not a list)
+ 
+ Of course you also can write your own operations:
+ 
+diff --git a/tests/test_autose_issue.py b/tests/test_autose_issue.py
+new file mode 100644
+index 0000000..0c2c128
+--- /dev/null
++++ b/tests/test_autose_issue.py
+@@ -0,0 +1,40 @@
++import pytest
++
++from tinydb import TinyDB, Query
++from tinydb.storages import MemoryStorage
++from tinydb.operations import append
++
++
++def make_db():
++    return TinyDB(storage=MemoryStorage)
++
++
++def test_ac1_append_to_existing_list():
++    db = make_db()
++    db.insert({'id': 3, 'tags': ['a']})
++    db.update(append('tags', 'urgent'), Query().id == 3)
++    assert db.get(Query().id == 3)['tags'] == ['a', 'urgent']
++
++
++def test_ac2_append_creates_missing_field():
++    db = make_db()
++    db.insert({'id': 3})
++    db.update(append('tags', 'urgent'), Query().id == 3)
++    assert db.get(Query().id == 3)['tags'] == ['urgent']
++
++
++def test_ac3_append_non_list_raises_typeerror():
++    db = make_db()
++    db.insert({'id': 3, 'tags': 'x'})
++    with pytest.raises(TypeError):
++        db.update(append('tags', 'urgent'), Query().id == 3)
++    assert db.get(Query().id == 3)['tags'] == 'x'
++
++
++def test_ac4_append_only_matching_document():
++    db = make_db()
++    db.insert({'id': 3, 'tags': ['a']})
++    db.insert({'id': 4, 'tags': ['b']})
++    db.update(append('tags', 'urgent'), Query().id == 3)
++    assert db.get(Query().id == 3)['tags'] == ['a', 'urgent']
++    assert db.get(Query().id == 4)['tags'] == ['b']
+diff --git a/tinydb/operations.py b/tinydb/operations.py
+index 3f6c6ab..44f3601 100644
+--- a/tinydb/operations.py
++++ b/tinydb/operations.py
+@@ -55,6 +55,27 @@ def set(field: str, val: Any) -> Callable[[MutableMapping], None]:
+     return transform
+ 
+ 
++def append(field: str, val: Any) -> Callable[[MutableMapping], None]:
++    """
++    Append ``val`` to the list in a given field.
++
++    If the field is missing, a new list is started. If the field is not a
++    list, a ``TypeError`` is raised.
++    """
++    def transform(doc: MutableMapping):
++        if field not in doc:
++            doc[field] = [val]
++        elif isinstance(doc[field], list):
++            doc[field].append(val)
++        else:
++            raise TypeError(
++                f"Cannot append to field '{field}': expected a list, "
++                f"got {type(doc[field]).__name__}"
++            )
++
++    return transform
++
++
+ def increment(field: str) -> Callable[[MutableMapping], None]:
+     """
+     Increment a given field in the document by 1.
