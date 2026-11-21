@@ -1,0 +1,216 @@
+diff --git a/tests/test_autose_issue.py b/tests/test_autose_issue.py
+new file mode 100644
+index 0000000..db5297b
+--- /dev/null
++++ b/tests/test_autose_issue.py
+@@ -0,0 +1,57 @@
++import pytest
++
++from tinydb import TinyDB
++from tinydb.operations import add, decrement, delete, increment, set, subtract
++from tinydb.storages import MemoryStorage
++
++
++def _db(doc):
++    db = TinyDB(storage=MemoryStorage)
++    db.insert(doc)
++    return db
++
++
++def test_ac1_nested_paths_and_dotted_key():
++    db = _db({'address': {'city': 'X'}, 'stats': {'visits': 3}, 'a.b': 1})
++    db.update(increment(['stats', 'visits']))
++    db.update(set(('address', 'city'), 'Pune'))
++    db.update(increment('a.b'))
++    assert db.all()[0] == {
++        'address': {'city': 'Pune'}, 'stats': {'visits': 4}, 'a.b': 2}
++
++
++def test_ac2_nested_operations():
++    ops = [
++        (delete(('a', 'b')), {'a': {'c': 1}}),
++        (add(('a', 'b'), 2), {'a': {'b': 7, 'c': 1}}),
++        (subtract(('a', 'b'), 1), {'a': {'b': 4, 'c': 1}}),
++        (decrement(('a', 'b')), {'a': {'b': 4, 'c': 1}}),
++    ]
++    for op, expected in ops:
++        db = _db({'a': {'b': 5, 'c': 1}})
++        db.update(op)
++        assert db.all()[0] == expected
++
++
++def test_ac3_set_creates_missing_dicts():
++    db = _db({})
++    db.update(set(('x', 'y', 'z'), 1))
++    assert db.all()[0] == {'x': {'y': {'z': 1}}}
++
++
++def test_ac4_missing_path_raises_keyerror():
++    for path in [('a', 'missing'), ('nope', 'b')]:
++        for op in [increment(path), add(path, 1), subtract(path, 1),
++                   decrement(path), delete(path)]:
++            db = _db({'a': {}})
++            with pytest.raises(KeyError):
++                db.update(op)
++            assert db.all()[0] == {'a': {}}
++
++
++def test_ac5_non_dict_intermediate_raises_typeerror():
++    for op in [set(('n', 'x'), 1), increment(('n', 'x'))]:
++        db = _db({'n': 5})
++        with pytest.raises(TypeError):
++            db.update(op)
++        assert db.all()[0] == {'n': 5}
+diff --git a/tinydb/operations.py b/tinydb/operations.py
+index 3f6c6ab..45e1dd9 100644
+--- a/tinydb/operations.py
++++ b/tinydb/operations.py
+@@ -6,70 +6,135 @@ They are used for updates like this:
+ >>> db.update(delete('foo'), where('foo') == 2)
+ 
+ This would delete the ``foo`` field from all documents where ``foo`` equals 2.
++
++A field may be a string (a top-level key, never split on dots) or a tuple/list
++of keys describing a path into nested documents:
++
++>>> db.update(increment(('stats', 'visits')))
+ """
+ 
+ 
+-from collections.abc import Callable, MutableMapping
++from collections.abc import Callable, MutableMapping, Sequence
+ from typing import Any, Union
+ 
++Field = Union[str, Sequence]
++
++
++def _split_path(field: Field):
++    # A str is always a single top-level key (no splitting on dots)
++    if isinstance(field, str):
++        return [], field
++
++    keys = list(field)
++    return keys[:-1], keys[-1]
++
++
++def _get_parent(doc: MutableMapping, field: Field):
++    """
++    Resolve the mapping holding the last key of ``field``.
++
++    Raises ``KeyError`` for a missing key and ``TypeError`` if an intermediate
++    value is not a mapping.
++    """
++    parent_keys, last = _split_path(field)
++    parent = doc
++    for key in parent_keys:
++        parent = parent[key]
++        if not isinstance(parent, MutableMapping):
++            raise TypeError(f'Cannot descend into non-mapping at {key!r}')
++
++    return parent, last
++
++
++def _ensure_parent(doc: MutableMapping, field: Field):
++    """
++    Like :func:`_get_parent` but creates missing intermediate dicts.
++
++    Existing intermediates are validated before anything is created, so a
++    ``TypeError`` leaves the document untouched.
++    """
++    parent_keys, last = _split_path(field)
++
++    current = doc
++    for key in parent_keys:
++        if key not in current:
++            break
++        current = current[key]
++        if not isinstance(current, MutableMapping):
++            raise TypeError(f'Cannot descend into non-mapping at {key!r}')
++
++    parent = doc
++    for key in parent_keys:
++        if key not in parent:
++            parent[key] = {}
++        parent = parent[key]
++
++    return parent, last
++
+ 
+-def delete(field: str) -> Callable[[MutableMapping], None]:
++def delete(field: Field) -> Callable[[MutableMapping], None]:
+     """
+     Delete a given field from the document.
+     """
+     def transform(doc: MutableMapping):
+-        del doc[field]
++        parent, last = _get_parent(doc, field)
++        del parent[last]
+ 
+     return transform
+ 
+ 
+-def add(field: str, n: Union[int, float, str]) -> Callable[[MutableMapping], None]:
++def add(field: Field, n: Union[int, float, str]) -> Callable[[MutableMapping], None]:
+     """
+     Add ``n`` to a given field in the document.
+ 
+     Also works for strings (concatenation), matching the documented behavior.
+     """
+     def transform(doc: MutableMapping):
+-        doc[field] += n
++        parent, last = _get_parent(doc, field)
++        parent[last] += n
+ 
+     return transform
+ 
+ 
+-def subtract(field: str, n: Union[int, float]) -> Callable[[MutableMapping], None]:
++def subtract(field: Field, n: Union[int, float]) -> Callable[[MutableMapping], None]:
+     """
+     Subtract ``n`` to a given field in the document.
+     """
+     def transform(doc: MutableMapping):
+-        doc[field] -= n
++        parent, last = _get_parent(doc, field)
++        parent[last] -= n
+ 
+     return transform
+ 
+ 
+-def set(field: str, val: Any) -> Callable[[MutableMapping], None]:
++def set(field: Field, val: Any) -> Callable[[MutableMapping], None]:
+     """
+     Set a given field to ``val``.
+     """
+     def transform(doc: MutableMapping):
+-        doc[field] = val
++        parent, last = _ensure_parent(doc, field)
++        parent[last] = val
+ 
+     return transform
+ 
+ 
+-def increment(field: str) -> Callable[[MutableMapping], None]:
++def increment(field: Field) -> Callable[[MutableMapping], None]:
+     """
+     Increment a given field in the document by 1.
+     """
+     def transform(doc: MutableMapping):
+-        doc[field] += 1
++        parent, last = _get_parent(doc, field)
++        parent[last] += 1
+ 
+     return transform
+ 
+ 
+-def decrement(field: str) -> Callable[[MutableMapping], None]:
++def decrement(field: Field) -> Callable[[MutableMapping], None]:
+     """
+     Decrement a given field in the document by 1.
+     """
+     def transform(doc: MutableMapping):
+-        doc[field] -= 1
++        parent, last = _get_parent(doc, field)
++        parent[last] -= 1
+ 
+     return transform
