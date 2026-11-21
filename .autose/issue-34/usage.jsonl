@@ -1,0 +1,1 @@
+{"label": "1-requirements", "seconds": 14.7, "subtype": "success", "is_error": false, "num_turns": 4, "input_tokens": 8, "cache_creation_input_tokens": 15725, "cache_read_input_tokens": 68577, "output_tokens": 1961, "models": ["claude-sonnet-5-5"]}
