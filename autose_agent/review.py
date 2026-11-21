@@ -25,7 +25,7 @@ def main():
     ap.add_argument("--work", default="work")
     ap.add_argument("--out", required=True)
     ap.add_argument("--pr", help="PR number (default: open PR from autose/issue-N)")
-    ap.add_argument("--variant", choices=("default", "with-claims", "plain"), default="default",
+    ap.add_argument("--variant", choices=("default", "with-claims", "plain", "adversarial"), default="default",
                     help="Decision-experiment variants (experiment/variants.md)")
     a = ap.parse_args()
 
@@ -52,7 +52,8 @@ def main():
     head = sh(["git", "rev-parse", "--short", "HEAD"], cwd=work).stdout.strip()
     title, body = fetch_issue(a.issue)
 
-    prompt = load_prompt("review_plain" if a.variant == "plain" else "review",
+    # ADR-012: default = neutral prompt + checklist; "adversarial" = the ADR-008 prompt.
+    prompt = load_prompt({"plain": "review_plain", "adversarial": "review_adversarial"}.get(a.variant, "review"),
                          issue=untrusted_issue(a.issue, title, body),
                          diff=diff[:60000] or "(empty diff)")
     if claims:
