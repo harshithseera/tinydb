@@ -16,3 +16,5 @@ Written by the pipeline script from pytest output (ADR-007), not by the agent.
 - Missing per-criterion tests: none
 - `python -m pytest` exit code: 0
 - Result: **PASS**
+
+PR: https://github.com/harshithseera/tinydb/pull/38
