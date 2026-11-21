@@ -223,6 +223,9 @@ Let's review the query operations we've learned:
 +-------------------------------------+---------------------------------------------------------------------+
 | ``Query().field.exists()``          | Match any document where a field called ``field`` exists            |
 +-------------------------------------+---------------------------------------------------------------------+
+| ``Query().field.between(low, high)``| Match any document where ``field`` is between ``low`` and ``high``  |
+|                                     | (both inclusive)                                                    |
++-------------------------------------+---------------------------------------------------------------------+
 | ``Query().field.matches(regex)``    | Match any document with the whole field matching the                |
 |                                     | regular expression                                                  |
 +-------------------------------------+---------------------------------------------------------------------+
