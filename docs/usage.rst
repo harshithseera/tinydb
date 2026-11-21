@@ -312,6 +312,8 @@ with these operations:
 - ``delete(key)``: delete a key from the document
 - ``increment(key)``: increment the value of a key
 - ``decrement(key)``: decrement the value of a key
+- ``toggle(key)``: flip a boolean value (raises ``KeyError`` if the key is
+  missing and ``TypeError`` if the value is not a bool)
 - ``add(key, value)``: add ``value`` to the value of a key (also works for strings)
 - ``subtract(key, value)``: subtract ``value`` from the value of a key
 - ``set(key, value)``: set ``key`` to ``value``

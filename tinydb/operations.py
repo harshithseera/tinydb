@@ -65,6 +65,25 @@ def increment(field: str) -> Callable[[MutableMapping], None]:
     return transform
 
 
+def toggle(field: str) -> Callable[[MutableMapping], None]:
+    """
+    Flip a boolean field in the document.
+
+    Raises ``KeyError`` if the field is missing and ``TypeError`` if its
+    value is not a bool.
+    """
+    def transform(doc: MutableMapping):
+        value = doc[field]
+        if not isinstance(value, bool):
+            raise TypeError(
+                f'Cannot toggle field {field!r}: expected bool, '
+                f'got {type(value).__name__}'
+            )
+        doc[field] = not value
+
+    return transform
+
+
 def decrement(field: str) -> Callable[[MutableMapping], None]:
     """
     Decrement a given field in the document by 1.
