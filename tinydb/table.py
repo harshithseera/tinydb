@@ -715,6 +715,14 @@ class Table:
 
         return len(self.search(cond))
 
+    def _reset(self) -> None:
+        """
+        Forget everything derived from the stored data (query cache and the
+        next document ID). Used when the table is dropped.
+        """
+        self._query_cache.clear()
+        self._next_id = None
+
     def clear_cache(self) -> None:
         """
         Clear the query cache.
