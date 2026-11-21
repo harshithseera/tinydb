@@ -3,6 +3,7 @@ Contains the :class:`base class <tinydb.storages.Storage>` for storages and
 implementations.
 """
 
+import datetime
 import io
 import json
 import os
@@ -31,6 +32,40 @@ def touch(path: str, create_dirs: bool):
     # does not exist yet but does not modify its contents
     with open(path, 'a'):
         pass
+
+
+_TYPE_TAG = '__tinydb_type__'
+
+
+def _json_default(obj: Any) -> Any:
+    """
+    ``default`` hook for :func:`json.dumps` encoding dates and datetimes.
+    """
+    # datetime is a subclass of date, so it has to be checked first
+    if isinstance(obj, datetime.datetime):
+        return {_TYPE_TAG: 'datetime', 'value': obj.isoformat()}
+    if isinstance(obj, datetime.date):
+        return {_TYPE_TAG: 'date', 'value': obj.isoformat()}
+
+    raise TypeError(
+        'Object of type {0} is not JSON serializable'.format(type(obj).__name__)
+    )
+
+
+def _json_object_hook(obj: dict) -> Any:
+    """
+    ``object_hook`` for :func:`json.load` restoring dates and datetimes.
+    """
+    if len(obj) == 2 and _TYPE_TAG in obj and 'value' in obj:
+        try:
+            if obj[_TYPE_TAG] == 'datetime':
+                return datetime.datetime.fromisoformat(obj['value'])
+            if obj[_TYPE_TAG] == 'date':
+                return datetime.date.fromisoformat(obj['value'])
+        except (TypeError, ValueError):
+            pass
+
+    return obj
 
 
 class Storage(ABC):
@@ -79,6 +114,10 @@ class Storage(ABC):
 class JSONStorage(Storage):
     """
     Store the data in a JSON file.
+
+    ``datetime.datetime`` and ``datetime.date`` values are stored as tagged
+    objects and restored with their original type on read. If a custom
+    ``default`` is passed as keyword argument it replaces this encoding.
     """
 
     def __init__(self, path: str, create_dirs=False, encoding=None, access_mode='r+', **kwargs):
@@ -137,14 +176,14 @@ class JSONStorage(Storage):
             self._handle.seek(0)
 
             # Load the JSON contents of the file
-            return json.load(self._handle)
+            return json.load(self._handle, object_hook=_json_object_hook)
 
     def write(self, data: dict[str, dict[str, Any]]):
         # Move the cursor to the beginning of the file just in case
         self._handle.seek(0)
 
         # Serialize the database state using the user-provided arguments
-        serialized = json.dumps(data, **self.kwargs)
+        serialized = json.dumps(data, **{'default': _json_default, **self.kwargs})
 
         # Write the serialized data to the file
         try:
