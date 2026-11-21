@@ -2,6 +2,7 @@
 This module contains the main component of TinyDB: the database.
 """
 
+import weakref
 from collections.abc import Iterator
 
 from . import JSONStorage
@@ -96,6 +97,9 @@ class TinyDB(TableBase):
 
         self._opened = True
         self._tables: dict[str, Table] = {}
+        # Every table object handed out, including ones the caller still
+        # holds after a drop, so a drop can reset their cached state.
+        self._handles: 'weakref.WeakSet[Table]' = weakref.WeakSet()
 
     def __repr__(self):
 
@@ -129,6 +133,7 @@ class TinyDB(TableBase):
 
         table = self.table_class(self.storage, name, **kwargs)
         self._tables[name] = table
+        self._handles.add(table)
 
         return table
 
@@ -169,6 +174,11 @@ class TinyDB(TableBase):
         # to the storage thereby returning to the initial state with no tables.
         self.storage.write({})
 
+        # Tables the caller still holds must not keep serving cached results
+        # (or old IDs) for data that no longer exists.
+        for table in list(self._handles):
+            table._reset()
+
         # After that we need to remember to empty the ``_tables`` dict, so we'll
         # create new table instances when a table is accessed again.
         self._tables.clear()
@@ -179,6 +189,12 @@ class TinyDB(TableBase):
 
         :param name: The name of the table to drop.
         """
+
+        # Reset every handle for this table, including ones forgotten by an
+        # earlier drop that the caller still holds.
+        for table in list(self._handles):
+            if table.name == name:
+                table._reset()
 
         # If the table is currently opened, we need to forget the table class
         # instance
