@@ -1,0 +1,62 @@
+diff --git a/tests/test_autose_issue.py b/tests/test_autose_issue.py
+new file mode 100644
+index 0000000..864067b
+--- /dev/null
++++ b/tests/test_autose_issue.py
+@@ -0,0 +1,30 @@
++from tinydb import TinyDB, Query
++from tinydb.storages import MemoryStorage
++
++
++def _setup():
++    db = TinyDB(storage=MemoryStorage)
++    users = db.table('users')
++    users.insert({'name': 'ann'})
++    assert users.search(Query().name == 'ann') == [{'name': 'ann'}]
++    return db, users
++
++
++def test_ac1_drop_table_clears_held_handle_cache():
++    db, users = _setup()
++    db.drop_table('users')
++    assert users.search(Query().name == 'ann') == []
++
++
++def test_ac2_drop_tables_clears_held_handle_cache():
++    db, users = _setup()
++    db.drop_tables()
++    assert users.search(Query().name == 'ann') == []
++
++
++def test_ac3_insert_after_drop_via_held_handle():
++    db, users = _setup()
++    db.drop_table('users')
++    users.insert({'name': 'bob'})
++    assert users.search(Query().name == 'ann') == []
++    assert users.search(Query().name == 'bob') == [{'name': 'bob'}]
+diff --git a/tinydb/database.py b/tinydb/database.py
+index 0cd2b7e..d115ea7 100644
+--- a/tinydb/database.py
++++ b/tinydb/database.py
+@@ -169,6 +169,11 @@ class TinyDB(TableBase):
+         # to the storage thereby returning to the initial state with no tables.
+         self.storage.write({})
+ 
++        # Clear the query caches so handles still held by the user don't
++        # return stale results
++        for table in self._tables.values():
++            table.clear_cache()
++
+         # After that we need to remember to empty the ``_tables`` dict, so we'll
+         # create new table instances when a table is accessed again.
+         self._tables.clear()
+@@ -183,6 +188,9 @@ class TinyDB(TableBase):
+         # If the table is currently opened, we need to forget the table class
+         # instance
+         if name in self._tables:
++            # Clear the query cache so handles still held by the user don't
++            # return stale results
++            self._tables[name].clear_cache()
+             del self._tables[name]
+ 
+         data = self.storage.read()
