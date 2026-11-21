@@ -15,8 +15,8 @@ CTL = pathlib.Path(__file__).resolve().parent
 REPO = os.environ.get("GITHUB_REPOSITORY", "harshithseera/tinydb")
 RUN_URL = (f"{os.environ.get('GITHUB_SERVER_URL', 'https://github.com')}/{REPO}"
            f"/actions/runs/{os.environ.get('GITHUB_RUN_ID', 'local')}")
-MODEL = os.environ.get("AUTOSE_MODEL", "sonnet")
-AGENT_TIMEOUT_S = int(os.environ.get("AUTOSE_AGENT_TIMEOUT_S", "1200"))
+MODEL = os.environ.get("AUTOSE_MODEL") or "sonnet"
+AGENT_TIMEOUT_S = int(os.environ.get("AUTOSE_AGENT_TIMEOUT_S") or "1200")
 
 # Tool sets (ADR-005). --tools limits which tools exist; --allowedTools pre-approves.
 TEST_CMDS = ["Bash(python -m pytest:*)", "Bash(python -c:*)"]

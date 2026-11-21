@@ -4,6 +4,7 @@ Every pass/fail decision is made here, deterministically (ADR-007). The agent on
 writes files in the working copy; this script commits, pushes and opens the PR.
 """
 import argparse
+import json
 import os
 import pathlib
 import re
@@ -14,8 +15,13 @@ from common import (BUILDER_ALLOWED, BUILDER_TOOLS, REPO, RUN_URL, agent_env, fe
                     gh_output, load_prompt, log, run_agent, sh, untrusted_issue,
                     usage_summary)
 
-MAX_TURNS = int(os.environ.get("AUTOSE_BUILDER_MAX_TURNS", "30"))
-IMPL_ATTEMPTS = int(os.environ.get("AUTOSE_IMPL_ATTEMPTS", "3"))
+MAX_TURNS = int(os.environ.get("AUTOSE_BUILDER_MAX_TURNS") or "30")
+IMPL_ATTEMPTS = int(os.environ.get("AUTOSE_IMPL_ATTEMPTS") or "3")
+# Per-run token budget (ADR-013), summed over every builder call of this issue run
+# (build + fix jobs). Defaults are ~2-2.5x the heaviest observed run: #35 batch()
+# used 17,820 output / 425,737 input tokens; #33 used 12,430 / 572,106.
+BUDGET_OUTPUT = int(os.environ.get("AUTOSE_TOKEN_BUDGET_OUTPUT") or "40000")
+BUDGET_INPUT = int(os.environ.get("AUTOSE_TOKEN_BUDGET_INPUT") or "1500000")
 ALLOWED_PREFIXES = ("tinydb/", "tests/", "docs/")
 BOT = ["-c", "user.name=github-actions[bot]",
        "-c", "user.email=41898282+github-actions[bot]@users.noreply.github.com"]
@@ -25,6 +31,20 @@ class StageFailed(Exception):
     def __init__(self, stage, artifact, reason):
         super().__init__(reason)
         self.stage, self.artifact, self.reason = stage, artifact, reason
+
+
+class BudgetExceeded(Exception):
+    pass
+
+
+def usage_totals(usage_log):
+    """(input incl. cache, output) tokens over all builder calls logged for this run."""
+    if not usage_log.exists():
+        return 0, 0
+    rows = [json.loads(l) for l in usage_log.read_text().splitlines() if l.strip()]
+    inp = sum((r.get("input_tokens") or 0) + (r.get("cache_creation_input_tokens") or 0)
+              + (r.get("cache_read_input_tokens") or 0) for r in rows)
+    return inp, sum(r.get("output_tokens") or 0 for r in rows)
 
 
 class Run:
@@ -59,8 +79,22 @@ class Run:
         return p.read_text() if p.exists() else f"({name} not present)"
 
     def agent(self, label, prompt):
+        # Deterministic budget check before every call (ADR-013).
+        inp, out = usage_totals(self.usage)
+        if out >= BUDGET_OUTPUT or inp >= BUDGET_INPUT:
+            raise BudgetExceeded(
+                f"Token budget exceeded before `{label}`: used {out:,} output tokens "
+                f"(limit {BUDGET_OUTPUT:,}) and {inp:,} input tokens incl. cache "
+                f"(limit {BUDGET_INPUT:,}).")
         return run_agent(label, prompt, self.work, BUILDER_TOOLS, BUILDER_ALLOWED,
                          MAX_TURNS, self.usage)
+
+    def restore_code(self, start_sha):
+        """Put every file outside .autose/ back to how it was at start_sha (ADR-013)."""
+        self.git("add", "-A")
+        self.git("restore", "--source", start_sha, "--staged", "--worktree",
+                 "--", ".", ":(exclude).autose")
+        self.git("clean", "-fdq", "--", ".", ":(exclude).autose")
 
     def code_diff(self, name_only=False):
         self.git("add", "-A")
@@ -296,6 +330,9 @@ def main():
         shutil.copy(a.review_file, run.art / "review.md")
         run.commit(f"autose #{a.issue}: record review round {a.round - 1}")
 
+    # Saved state: the code as it was before this pipeline invocation touched it.
+    start_sha = run.git("rev-parse", "HEAD").stdout.strip()
+
     try:
         if a.from_stage == 1:
             run.stage1_requirements()
@@ -304,6 +341,26 @@ def main():
         run.build_loop(review_feedback=(f"Reviewer feedback to address:\n{review_text}"
                                         if review_text and a.from_stage == 3 else ""))
         url = run.stage5_release(a.round)
+    except BudgetExceeded as e:
+        run.restore_code(start_sha)
+        inp, out = usage_totals(run.usage)
+        (run.art / "budget.md").write_text(
+            f"# Token budget exceeded — issue #{a.issue}, round {a.round}\n\n{e}\n\n"
+            f"All code changes made in this round were discarded: files outside `.autose/` "
+            f"were restored to `{start_sha[:7]}`, the commit this round started from. "
+            f"Artifacts written so far are kept for inspection.\n\n"
+            f"Totals: {out:,} output / {inp:,} input tokens. Run: {RUN_URL}\n")
+        run.commit(f"autose #{a.issue}: token budget exceeded, code restored to {start_sha[:7]}")
+        run.push()
+        msg = (f"AutoSE stopped: **token limit exceeded, code restored** to `{start_sha[:7]}`.\n\n"
+               f"{e}\n\nDetails: `.autose/issue-{a.issue}/budget.md`. Run: {RUN_URL}")
+        run.comment(msg)
+        pr = gh("pr", "list", "--repo", REPO, "--head", run.branch, "--state", "open",
+                "--json", "number", "--jq", ".[0].number")
+        if pr:
+            gh("pr", "comment", pr, "--repo", REPO, "--body-file", "-", input=msg)
+        gh_output("status", "stopped-budget")
+        sys.exit(1)
     except StageFailed as e:
         run.append_failure(e.artifact, e.stage, e.reason)
         run.commit(f"autose #{a.issue}: stopped at stage {e.stage}")
