@@ -3,6 +3,7 @@ Contains the :class:`base class <tinydb.storages.Storage>` for storages and
 implementations.
 """
 
+import datetime
 import io
 import json
 import os
@@ -11,6 +12,13 @@ from abc import ABC, abstractmethod
 from typing import Any, Optional
 
 __all__ = ('Storage', 'JSONStorage', 'MemoryStorage')
+
+
+def _json_default(obj):
+    """Serialize dates/datetimes as ISO-8601 strings."""
+    if isinstance(obj, (datetime.date, datetime.datetime)):
+        return obj.isoformat()
+    raise TypeError(f'Object of type {type(obj).__name__} is not JSON serializable')
 
 
 def touch(path: str, create_dirs: bool):
@@ -143,8 +151,11 @@ class JSONStorage(Storage):
         # Move the cursor to the beginning of the file just in case
         self._handle.seek(0)
 
-        # Serialize the database state using the user-provided arguments
-        serialized = json.dumps(data, **self.kwargs)
+        # Serialize the database state using the user-provided arguments.
+        # Dates and datetimes are stored as ISO-8601 strings by default.
+        kwargs = dict(self.kwargs)
+        kwargs.setdefault('default', _json_default)
+        serialized = json.dumps(data, **kwargs)
 
         # Write the serialized data to the file
         try:
