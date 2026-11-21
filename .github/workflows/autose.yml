@@ -62,6 +62,10 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           ISSUE: ${{ needs.gate.outputs.issue }}
+          AUTOSE_TOKEN_BUDGET_OUTPUT: ${{ vars.AUTOSE_TOKEN_BUDGET_OUTPUT }}
+          AUTOSE_TOKEN_BUDGET_INPUT: ${{ vars.AUTOSE_TOKEN_BUDGET_INPUT }}
+          AUTOSE_IMPL_ATTEMPTS: ${{ vars.AUTOSE_IMPL_ATTEMPTS }}
+          AUTOSE_BUILDER_MAX_TURNS: ${{ vars.AUTOSE_BUILDER_MAX_TURNS }}
         run: python ctl/autose_agent/pipeline.py --issue "$ISSUE" --from-stage 1 --round 1
 
   ci-1:
@@ -118,6 +122,10 @@ jobs:
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           ISSUE: ${{ needs.gate.outputs.issue }}
           VERDICT: ${{ needs.review-1.outputs.verdict }}
+          AUTOSE_TOKEN_BUDGET_OUTPUT: ${{ vars.AUTOSE_TOKEN_BUDGET_OUTPUT }}
+          AUTOSE_TOKEN_BUDGET_INPUT: ${{ vars.AUTOSE_TOKEN_BUDGET_INPUT }}
+          AUTOSE_IMPL_ATTEMPTS: ${{ vars.AUTOSE_IMPL_ATTEMPTS }}
+          AUTOSE_BUILDER_MAX_TURNS: ${{ vars.AUTOSE_BUILDER_MAX_TURNS }}
         run: |
           if [ "$VERDICT" = "changes-approach" ]; then from=2; else from=3; fi
           python ctl/autose_agent/pipeline.py --issue "$ISSUE" --from-stage "$from" --round 2 \

@@ -13,7 +13,7 @@ from common import (REPO, REVIEWER_ALLOWED, REVIEWER_TOOLS, RUN_URL, fetch_issue
                     gh_output, load_prompt, log, run_agent, sh, untrusted_issue,
                     usage_summary)
 
-MAX_TURNS = int(os.environ.get("AUTOSE_REVIEWER_MAX_TURNS", "25"))
+MAX_TURNS = int(os.environ.get("AUTOSE_REVIEWER_MAX_TURNS") or "25")
 VERDICT = re.compile(r"^\s*\**VERDICT:\s*(approve|changes-code|changes-approach)\**\s*$", re.M | re.I)
 
 
