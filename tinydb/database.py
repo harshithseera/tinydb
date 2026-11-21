@@ -169,6 +169,11 @@ class TinyDB(TableBase):
         # to the storage thereby returning to the initial state with no tables.
         self.storage.write({})
 
+        # Table objects the caller still holds would otherwise keep serving
+        # cached query results for data that no longer exists.
+        for table in self._tables.values():
+            table.clear_cache()
+
         # After that we need to remember to empty the ``_tables`` dict, so we'll
         # create new table instances when a table is accessed again.
         self._tables.clear()
@@ -181,8 +186,10 @@ class TinyDB(TableBase):
         """
 
         # If the table is currently opened, we need to forget the table class
-        # instance
+        # instance. Clear its query cache first: the caller may still hold a
+        # reference to it, and cached results would outlive the dropped data.
         if name in self._tables:
+            self._tables[name].clear_cache()
             del self._tables[name]
 
         data = self.storage.read()
