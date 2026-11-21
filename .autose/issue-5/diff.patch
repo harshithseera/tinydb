@@ -1,0 +1,118 @@
+diff --git a/tests/test_autose_issue.py b/tests/test_autose_issue.py
+new file mode 100644
+index 0000000..2a472da
+--- /dev/null
++++ b/tests/test_autose_issue.py
+@@ -0,0 +1,48 @@
++from datetime import datetime
++
++from tinydb import TinyDB, Query
++from tinydb.storages import MemoryStorage
++
++DT = datetime(2024, 1, 2, 3, 4, 5)
++
++
++def test_ac1_insert_datetime_no_error(tmp_path):
++    with TinyDB(str(tmp_path / 'db.json')) as db:
++        db.insert({'title': 'hello', 'created': DT})
++
++
++def test_ac2_read_back_datetime(tmp_path):
++    with TinyDB(str(tmp_path / 'db.json')) as db:
++        db.insert({'title': 'hello', 'created': DT})
++        for doc in (db.all()[0], db.get(Query().title == 'hello')):
++            assert doc['created'] == DT
++            assert isinstance(doc['created'], datetime)
++
++
++def test_ac3_datetime_survives_reopen(tmp_path):
++    path = str(tmp_path / 'db.json')
++    with TinyDB(path) as db:
++        db.insert({'title': 'hello', 'created': DT})
++    with TinyDB(path) as db:
++        doc = db.all()[0]
++        assert doc['created'] == DT
++        assert isinstance(doc['created'], datetime)
++
++
++def test_ac4_search_by_datetime(tmp_path):
++    with TinyDB(str(tmp_path / 'db.json')) as db:
++        db.insert({'title': 'a', 'created': DT})
++        db.insert({'title': 'b', 'created': datetime(2025, 5, 5)})
++        res = db.search(Query().created == DT)
++        assert len(res) == 1
++        assert res[0]['title'] == 'a'
++
++
++def test_ac5_native_values_unchanged(tmp_path):
++    path = str(tmp_path / 'db.json')
++    docs = [{'s': '2024-01-02T03:04:05', 'i': 3, 'l': [1, 'x', {'a': 2}],
++             'n': {'k': {'z': 'v'}}}]
++    with TinyDB(path) as db:
++        db.insert_multiple(docs)
++    with TinyDB(path) as db:
++        assert [dict(d) for d in db.all()] == docs
+diff --git a/tinydb/storages.py b/tinydb/storages.py
+index 59337a1..3df565e 100644
+--- a/tinydb/storages.py
++++ b/tinydb/storages.py
+@@ -8,6 +8,7 @@ import json
+ import os
+ import warnings
+ from abc import ABC, abstractmethod
++from datetime import datetime
+ from typing import Any, Optional
+ 
+ __all__ = ('Storage', 'JSONStorage', 'MemoryStorage')
+@@ -33,6 +34,34 @@ def touch(path: str, create_dirs: bool):
+         pass
+ 
+ 
++_DATETIME_TAG = '$tinydb_datetime'
++
++
++def _encode_default(obj: Any) -> Any:
++    """
++    ``json`` default hook: encode a ``datetime`` as a tagged object.
++    """
++    if isinstance(obj, datetime):
++        return {_DATETIME_TAG: obj.isoformat()}
++
++    raise TypeError(
++        'Object of type {0} is not JSON serializable'.format(type(obj).__name__)
++    )
++
++
++def _decode_hook(obj: dict) -> Any:
++    """
++    ``json`` object hook: decode a tagged object back into a ``datetime``.
++    """
++    if len(obj) == 1 and isinstance(obj.get(_DATETIME_TAG), str):
++        try:
++            return datetime.fromisoformat(obj[_DATETIME_TAG])
++        except ValueError:
++            pass
++
++    return obj
++
++
+ class Storage(ABC):
+     """
+     The abstract base class for all Storages.
+@@ -137,14 +166,14 @@ class JSONStorage(Storage):
+             self._handle.seek(0)
+ 
+             # Load the JSON contents of the file
+-            return json.load(self._handle)
++            return json.load(self._handle, object_hook=_decode_hook)
+ 
+     def write(self, data: dict[str, dict[str, Any]]):
+         # Move the cursor to the beginning of the file just in case
+         self._handle.seek(0)
+ 
+         # Serialize the database state using the user-provided arguments
+-        serialized = json.dumps(data, **self.kwargs)
++        serialized = json.dumps(data, **{'default': _encode_default, **self.kwargs})
+ 
+         # Write the serialized data to the file
+         try:

@@ -8,6 +8,7 @@ import json
 import os
 import warnings
 from abc import ABC, abstractmethod
+from datetime import datetime
 from typing import Any, Optional
 
 __all__ = ('Storage', 'JSONStorage', 'MemoryStorage')
@@ -31,6 +32,34 @@ def touch(path: str, create_dirs: bool):
     # does not exist yet but does not modify its contents
     with open(path, 'a'):
         pass
+
+
+_DATETIME_TAG = '$tinydb_datetime'
+
+
+def _encode_default(obj: Any) -> Any:
+    """
+    ``json`` default hook: encode a ``datetime`` as a tagged object.
+    """
+    if isinstance(obj, datetime):
+        return {_DATETIME_TAG: obj.isoformat()}
+
+    raise TypeError(
+        'Object of type {0} is not JSON serializable'.format(type(obj).__name__)
+    )
+
+
+def _decode_hook(obj: dict) -> Any:
+    """
+    ``json`` object hook: decode a tagged object back into a ``datetime``.
+    """
+    if len(obj) == 1 and isinstance(obj.get(_DATETIME_TAG), str):
+        try:
+            return datetime.fromisoformat(obj[_DATETIME_TAG])
+        except ValueError:
+            pass
+
+    return obj
 
 
 class Storage(ABC):
@@ -137,14 +166,14 @@ class JSONStorage(Storage):
             self._handle.seek(0)
 
             # Load the JSON contents of the file
-            return json.load(self._handle)
+            return json.load(self._handle, object_hook=_decode_hook)
 
     def write(self, data: dict[str, dict[str, Any]]):
         # Move the cursor to the beginning of the file just in case
         self._handle.seek(0)
 
         # Serialize the database state using the user-provided arguments
-        serialized = json.dumps(data, **self.kwargs)
+        serialized = json.dumps(data, **{'default': _encode_default, **self.kwargs})
 
         # Write the serialized data to the file
         try:
