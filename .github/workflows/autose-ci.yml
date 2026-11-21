@@ -1,0 +1,27 @@
+# Lightweight CI used as the stage-5 check (ADR-007). PRs opened with GITHUB_TOKEN do
+# not trigger pull_request workflows, so autose.yml also calls this via workflow_call.
+name: autose-ci
+on:
+  pull_request:
+    branches: [master]
+  workflow_call:
+    inputs:
+      ref:
+        type: string
+        required: true
+permissions:
+  contents: read
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install -q -e . pytest pytest-cov
+      - run: python -m pytest -p no:cacheprovider -q

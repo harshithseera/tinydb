@@ -1,0 +1,23 @@
+name: autose-setup
+description: Check out the work tree, install Python deps and Claude Code
+inputs:
+  ref:
+    description: Branch to check out into ./work
+    required: true
+runs:
+  using: composite
+  steps:
+    - uses: actions/checkout@v4
+      with:
+        ref: ${{ inputs.ref }}
+        path: work
+        fetch-depth: 0
+        persist-credentials: false
+    - uses: actions/setup-python@v5
+      with:
+        python-version: "3.12"
+    - shell: bash
+      run: |
+        python -m pip install -q -e work pytest pytest-cov
+        npm install -g -q @anthropic-ai/claude-code@2.1.329
+        claude --version
