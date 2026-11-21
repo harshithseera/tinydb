@@ -1,0 +1,159 @@
+diff --git a/tests/test_autose_issue.py b/tests/test_autose_issue.py
+new file mode 100644
+index 0000000..646d4b3
+--- /dev/null
++++ b/tests/test_autose_issue.py
+@@ -0,0 +1,72 @@
++import datetime
++import json
++
++from tinydb import TinyDB, Query
++
++DT = datetime.datetime(2024, 5, 17, 13, 45, 12, 123456)
++D = datetime.date(2024, 5, 17)
++
++
++def test_ac1_insert_dates_writes_file(tmp_path):
++    path = tmp_path / 'db.json'
++    db = TinyDB(str(path))
++    db.insert({'created': DT, 'due': D})
++    db.close()
++
++    assert path.exists()
++    assert path.stat().st_size > 0
++    with open(path) as f:
++        json.load(f)
++
++
++def test_ac2_roundtrip_preserves_types(tmp_path):
++    path = str(tmp_path / 'db.json')
++    db = TinyDB(path)
++    db.insert({'created': DT, 'due': D})
++    db.close()
++
++    db = TinyDB(path)
++    doc = db.all()[0]
++    db.close()
++
++    assert doc['created'] == DT
++    assert type(doc['created']) is datetime.datetime
++    assert doc['due'] == D
++    assert type(doc['due']) is datetime.date
++
++
++def test_ac3_query_on_datetime_after_reopen(tmp_path):
++    path = str(tmp_path / 'db.json')
++    db = TinyDB(path)
++    db.insert({'name': 'a', 'created': DT})
++    db.insert({'name': 'b', 'created': DT + datetime.timedelta(days=1)})
++    db.close()
++
++    db = TinyDB(path)
++    res = db.search(Query().created == DT)
++    db.close()
++
++    assert len(res) == 1
++    assert res[0]['name'] == 'a'
++
++
++def test_ac4_plain_values_unchanged(tmp_path):
++    path = str(tmp_path / 'db.json')
++    doc = {
++        's': '2024-05-17',
++        't': '2024-05-17T13:45:12',
++        'i': 3,
++        'l': [1, 'x', {'a': 'b'}],
++        'd': {'k': 'v'},
++    }
++    db = TinyDB(path)
++    db.insert(doc)
++    db.close()
++
++    db = TinyDB(path)
++    got = db.all()[0]
++    db.close()
++
++    assert got == doc
++    assert type(got['s']) is str
++    assert type(got['t']) is str
+diff --git a/tinydb/storages.py b/tinydb/storages.py
+index 59337a1..f65bcd1 100644
+--- a/tinydb/storages.py
++++ b/tinydb/storages.py
+@@ -3,6 +3,7 @@ Contains the :class:`base class <tinydb.storages.Storage>` for storages and
+ implementations.
+ """
+ 
++import datetime
+ import io
+ import json
+ import os
+@@ -33,6 +34,40 @@ def touch(path: str, create_dirs: bool):
+         pass
+ 
+ 
++_TYPE_TAG = '__tinydb_type__'
++
++
++def _json_default(obj: Any) -> Any:
++    """
++    ``default`` hook for :func:`json.dumps` encoding dates and datetimes.
++    """
++    # datetime is a subclass of date, so it has to be checked first
++    if isinstance(obj, datetime.datetime):
++        return {_TYPE_TAG: 'datetime', 'value': obj.isoformat()}
++    if isinstance(obj, datetime.date):
++        return {_TYPE_TAG: 'date', 'value': obj.isoformat()}
++
++    raise TypeError(
++        'Object of type {0} is not JSON serializable'.format(type(obj).__name__)
++    )
++
++
++def _json_object_hook(obj: dict) -> Any:
++    """
++    ``object_hook`` for :func:`json.load` restoring dates and datetimes.
++    """
++    if len(obj) == 2 and _TYPE_TAG in obj and 'value' in obj:
++        try:
++            if obj[_TYPE_TAG] == 'datetime':
++                return datetime.datetime.fromisoformat(obj['value'])
++            if obj[_TYPE_TAG] == 'date':
++                return datetime.date.fromisoformat(obj['value'])
++        except (TypeError, ValueError):
++            pass
++
++    return obj
++
++
+ class Storage(ABC):
+     """
+     The abstract base class for all Storages.
+@@ -79,6 +114,10 @@ class Storage(ABC):
+ class JSONStorage(Storage):
+     """
+     Store the data in a JSON file.
++
++    ``datetime.datetime`` and ``datetime.date`` values are stored as tagged
++    objects and restored with their original type on read. If a custom
++    ``default`` is passed as keyword argument it replaces this encoding.
+     """
+ 
+     def __init__(self, path: str, create_dirs=False, encoding=None, access_mode='r+', **kwargs):
+@@ -137,14 +176,14 @@ class JSONStorage(Storage):
+             self._handle.seek(0)
+ 
+             # Load the JSON contents of the file
+-            return json.load(self._handle)
++            return json.load(self._handle, object_hook=_json_object_hook)
+ 
+     def write(self, data: dict[str, dict[str, Any]]):
+         # Move the cursor to the beginning of the file just in case
+         self._handle.seek(0)
+ 
+         # Serialize the database state using the user-provided arguments
+-        serialized = json.dumps(data, **self.kwargs)
++        serialized = json.dumps(data, **{'default': _json_default, **self.kwargs})
+ 
+         # Write the serialized data to the file
+         try:
