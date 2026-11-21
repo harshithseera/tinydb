@@ -27,6 +27,7 @@ class _Batch:
         self.original = None
         self.data = None
         self.next_ids: dict = {}
+        self.tables: dict = {}
 
     def begin(self, storage: Storage, tables: dict) -> None:
         if self.depth == 0:
@@ -36,6 +37,7 @@ class _Batch:
             if self.data is None:
                 self.data = {}
             self.next_ids = {n: t._next_id for n, t in tables.items()}
+            self.tables = dict(tables)
         self.depth += 1
 
     def commit(self, storage: Storage) -> None:
@@ -44,15 +46,22 @@ class _Batch:
             storage.write(self.data)
 
     def rollback(self, tables: dict) -> None:
-        for name, table in tables.items():
-            table._next_id = self.next_ids.get(name)
+        # Tables created inside the batch get their counter reset too
+        for table in list(tables.values()) + list(self.tables.values()):
+            table._next_id = None
             table.clear_cache()
+        for name, table in self.tables.items():
+            table._next_id = self.next_ids.get(name)
+        # Restore the table instances as they were (undo dropped tables)
+        tables.clear()
+        tables.update(self.tables)
 
     def reset(self) -> None:
         self.depth = 0
         self.original = None
         self.data = None
         self.next_ids = {}
+        self.tables = {}
 
 
 class TinyDB(TableBase):
@@ -186,7 +195,7 @@ class TinyDB(TableBase):
         nothing is written and the database behaves as if the block never ran.
         Nested ``batch()`` blocks are part of the outer one.
 
-        Dropping tables inside a batch is not supported.
+        Dropping tables inside a batch is part of the batch as well.
         """
 
         state = self._batch_state
@@ -194,7 +203,11 @@ class TinyDB(TableBase):
         try:
             yield self
         except BaseException:
-            state.failed = True
+            # An exception caught inside the outer block (raised by a nested
+            # batch) does not discard the outer block's changes; only an
+            # exception leaving the outermost block does.
+            if state.depth == 1:
+                state.failed = True
             raise
         finally:
             state.depth -= 1
@@ -241,7 +254,20 @@ class TinyDB(TableBase):
         # so we need to consider this case to and return an empty set in this
         # case.
 
-        return set(self.storage.read() or {})
+        return set(self._read_all() or {})
+
+    def _read_all(self):
+        state = self._batch_state
+        if state.depth:
+            return state.data
+        return self.storage.read()
+
+    def _write_all(self, data) -> None:
+        state = self._batch_state
+        if state.depth:
+            state.data = data
+        else:
+            self.storage.write(data)
 
     def drop_tables(self) -> None:
         """
@@ -250,7 +276,7 @@ class TinyDB(TableBase):
 
         # We drop all tables from this database by writing an empty dict
         # to the storage thereby returning to the initial state with no tables.
-        self.storage.write({})
+        self._write_all({})
 
         # After that we need to remember to empty the ``_tables`` dict, so we'll
         # create new table instances when a table is accessed again.
@@ -268,7 +294,7 @@ class TinyDB(TableBase):
         if name in self._tables:
             del self._tables[name]
 
-        data = self.storage.read()
+        data = self._read_all()
 
         # The database is uninitialized, there's nothing to do
         if data is None:
@@ -282,7 +308,7 @@ class TinyDB(TableBase):
         del data[name]
 
         # Store the updated data back to the storage
-        self.storage.write(data)
+        self._write_all(data)
 
     @property
     def storage(self) -> Storage:
