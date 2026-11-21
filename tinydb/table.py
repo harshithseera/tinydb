@@ -4,6 +4,7 @@ data in TinyDB.
 """
 
 from collections.abc import Callable, Iterable, Iterator, Mapping, MutableMapping
+import copy
 from typing import (
     NoReturn,
     Optional,
@@ -251,10 +252,8 @@ class Table:
         Search for all documents matching a 'where' cond.
 
         Note: a repeated search with the same ``cond`` is served from an
-        internal cache. The returned list is a fresh copy, but its
-        documents are the same objects held by the cache -- treat them as
-        read-only, since mutating one (a key or a nested value) corrupts
-        what a later identical search returns.
+        internal cache. The returned documents are copies, so mutating
+        them does not affect later searches.
 
         :param cond: the condition to check against
         :returns: list of matching documents
@@ -264,7 +263,8 @@ class Table:
         # query
         cached_results = self._query_cache.get(cond)
         if cached_results is not None:
-            return cached_results[:]
+            # Hand out copies so callers can't mutate what the cache holds
+            return [copy.deepcopy(doc) for doc in cached_results]
 
         # Perform the search by applying the query to all documents.
         # Then, only if the document matches the query, convert it
@@ -292,7 +292,7 @@ class Table:
                                                    lambda: True)
         if is_cacheable():
             # Update the query cache
-            self._query_cache[cond] = docs[:]
+            self._query_cache[cond] = [copy.deepcopy(doc) for doc in docs]
 
         return docs
 

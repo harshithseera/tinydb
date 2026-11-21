@@ -729,10 +729,9 @@ def test_query_cache():
     assert db.search(query) == [{'name': 'foo', 'value': 42}]
 
 
-def test_query_cache_documents_are_shared_with_cache():
-    """search() returns a fresh list each call, but its documents are the
-    same objects the cache holds (see the docstring): the list itself can
-    be mutated freely, the documents inside it cannot."""
+def test_query_cache_documents_are_not_shared_with_cache():
+    """search() returns fresh copies of the cached documents, so neither
+    the list nor the documents inside it can corrupt the cache."""
     db = TinyDB(storage=MemoryStorage)
     db.insert({'name': 'Alice', 'tags': ['a', 'b']})
 
@@ -746,11 +745,10 @@ def test_query_cache_documents_are_shared_with_cache():
     results2 = db.search(query)
     assert results2 == [{'name': 'Alice', 'tags': ['a', 'b']}]
 
-    # But a document inside it is the cached object, so mutating a
-    # top-level key or a nested value both reach the cache.
+    # Documents are copies too, so nested mutation doesn't reach the cache.
     results2[0]['tags'].append('c')
     results3 = db.search(query)
-    assert results3[0]['tags'] == ['a', 'b', 'c']
+    assert results3[0]['tags'] == ['a', 'b']
 
 
 def test_tinydb_is_iterable(db: TinyDB):
