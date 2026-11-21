@@ -329,6 +329,20 @@ class Query(QueryInstance):
             ('>=', self._path, rhs)
         )
 
+    def between(self, lower: Any, upper: Any) -> QueryInstance:
+        """
+        Test a dict value for being within a range.
+
+        >>> Query().age.between(18, 30)
+
+        :param lower: The lower bound
+        :param upper: The upper bound
+        """
+        return self._generate_test(
+            lambda value: lower <= value < upper,
+            ('between', self._path, (lower, upper))
+        )
+
     def exists(self) -> QueryInstance:
         """
         Test for a dict where a provided key exists.
