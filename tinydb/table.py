@@ -269,10 +269,17 @@ class Table:
         # Perform the search by applying the query to all documents.
         # Then, only if the document matches the query, convert it
         # to the document class and document ID class.
+        def matches(doc):
+            # Documents whose values can't be compared simply don't match
+            try:
+                return cond(doc)
+            except TypeError:
+                return False
+
         docs = [
             self.document_class(doc, self.document_id_class(doc_id))
             for doc_id, doc in self._read_table().items()
-            if cond(doc)
+            if matches(doc)
         ]
 
         # Only cache cacheable queries.
