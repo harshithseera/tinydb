@@ -486,6 +486,28 @@ class Query(QueryInstance):
             ('one_of', self._path, freeze(items))
         )
 
+    def between(self, lower: Any, upper: Any) -> QueryInstance:
+        """
+        Check if the value lies between ``lower`` and ``upper`` (inclusive).
+
+        Values that cannot be compared with the bounds do not match.
+
+        >>> Query().f1.between(18, 30)
+
+        :param lower: The lower bound (inclusive)
+        :param upper: The upper bound (inclusive)
+        """
+        def test(value):
+            try:
+                return lower <= value <= upper
+            except TypeError:
+                return False
+
+        return self._generate_test(
+            test,
+            ('between', self._path, freeze(lower), freeze(upper))
+        )
+
     def fragment(self, document: Mapping) -> QueryInstance:
         def test(value):
             for key in document:

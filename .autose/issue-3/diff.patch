@@ -1,0 +1,87 @@
+diff --git a/docs/usage.rst b/docs/usage.rst
+index 9d61f5c..f33164b 100644
+--- a/docs/usage.rst
++++ b/docs/usage.rst
+@@ -245,6 +245,8 @@ Let's review the query operations we've learned:
+ +-------------------------------------+---------------------------------------------------------------------+
+ | ``Query().field.one_of(list)``      | Match if the field is contained in the list                         |
+ +-------------------------------------+---------------------------------------------------------------------+
++| ``Query().field.between(a, b)``     | Match if ``a <= field <= b`` (both ends included)                   |
+++-------------------------------------+---------------------------------------------------------------------+
+ | **Logical operations on queries**                                                                         |
+ +-------------------------------------+---------------------------------------------------------------------+
+ | ``~ (query)``                       | Match documents that don't match the query (logical NOT)            |
+diff --git a/tests/test_autose_issue.py b/tests/test_autose_issue.py
+new file mode 100644
+index 0000000..6294239
+--- /dev/null
++++ b/tests/test_autose_issue.py
+@@ -0,0 +1,35 @@
++from tinydb import TinyDB, Query
++from tinydb.storages import MemoryStorage
++
++
++def _db(docs):
++    db = TinyDB(storage=MemoryStorage)
++    db.insert_multiple(docs)
++    return db
++
++
++def test_ac1_between_inclusive_numbers():
++    db = _db([{'age': a} for a in (17, 18, 25, 30, 31)])
++    res = db.search(Query().age.between(18, 30))
++    assert sorted(d['age'] for d in res) == [18, 25, 30]
++
++
++def test_ac2_between_iso_dates_missing_field():
++    db = _db([{'d': '2020-01-01'}, {'d': '2020-06-15'},
++              {'d': '2021-01-01'}, {'x': 1}])
++    res = db.search(Query().d.between('2020-01-01', '2020-12-31'))
++    assert [d['d'] for d in res] == ['2020-01-01', '2020-06-15']
++
++
++def test_ac3_between_combines_with_or_and():
++    db = _db([{'age': 10}, {'age': 20}, {'age': 40}])
++    res = db.search(Query().age.between(15, 30) | Query().age.between(35, 45))
++    assert sorted(d['age'] for d in res) == [20, 40]
++    res = db.search(Query().age.between(15, 30) & (Query().age >= 20))
++    assert [d['age'] for d in res] == [20]
++
++
++def test_ac4_not_between():
++    db = _db([{'age': 20}, {'other': 1}])
++    res = db.search(~Query().age.between(18, 30))
++    assert res == [{'other': 1}]
+diff --git a/tinydb/queries.py b/tinydb/queries.py
+index e106c5d..9a51bba 100644
+--- a/tinydb/queries.py
++++ b/tinydb/queries.py
+@@ -486,6 +486,28 @@ class Query(QueryInstance):
+             ('one_of', self._path, freeze(items))
+         )
+ 
++    def between(self, lower: Any, upper: Any) -> QueryInstance:
++        """
++        Check if the value lies between ``lower`` and ``upper`` (inclusive).
++
++        Values that cannot be compared with the bounds do not match.
++
++        >>> Query().f1.between(18, 30)
++
++        :param lower: The lower bound (inclusive)
++        :param upper: The upper bound (inclusive)
++        """
++        def test(value):
++            try:
++                return lower <= value <= upper
++            except TypeError:
++                return False
++
++        return self._generate_test(
++            test,
++            ('between', self._path, freeze(lower), freeze(upper))
++        )
++
+     def fragment(self, document: Mapping) -> QueryInstance:
+         def test(value):
+             for key in document:
