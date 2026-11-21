@@ -1,1 +1,2 @@
 {"label": "1-requirements", "seconds": 14.5, "subtype": "success", "is_error": false, "num_turns": 4, "input_tokens": 8, "cache_creation_input_tokens": 14836, "cache_read_input_tokens": 66924, "output_tokens": 1836, "models": ["claude-sonnet-5-5"]}
+{"label": "2-design", "seconds": 19.6, "subtype": "success", "is_error": false, "num_turns": 6, "input_tokens": 10, "cache_creation_input_tokens": 11535, "cache_read_input_tokens": 68785, "output_tokens": 2422, "models": ["claude-sonnet-5-5"]}
