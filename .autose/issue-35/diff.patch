@@ -1,0 +1,317 @@
+diff --git a/tests/test_autose_issue.py b/tests/test_autose_issue.py
+new file mode 100644
+index 0000000..8798920
+--- /dev/null
++++ b/tests/test_autose_issue.py
+@@ -0,0 +1,125 @@
++import pytest
++
++from tinydb import TinyDB, Query
++from tinydb.middlewares import CachingMiddleware
++from tinydb.storages import MemoryStorage
++
++
++class CountingStorage(MemoryStorage):
++    writes = 0
++
++    def write(self, data):
++        type(self).writes += 1
++        super().write(data)
++
++
++def _snapshot(db):
++    return {
++        'default': sorted(d['a'] for d in db.all()),
++        'logs': sorted(d['id'] for d in db.table('logs').all()),
++    }
++
++
++def test_ac1_single_write_for_batch():
++    CountingStorage.writes = 0
++    db = TinyDB(storage=CountingStorage)
++    logs = db.table('logs')
++    logs.insert({'id': 3, 'seen': False})
++    CountingStorage.writes = 0
++
++    with db.batch():
++        db.insert({'a': 1})
++        db.insert({'a': 2})
++        db.update({'a': 5}, Query().a == 1)
++        db.table('logs').update({'seen': True}, Query().id == 3)
++        db.table('logs').insert({'id': 4})
++        assert CountingStorage.writes == 0
++
++    assert CountingStorage.writes == 1
++    assert sorted(d['a'] for d in db.all()) == [2, 5]
++    assert db.table('logs').get(Query().id == 3)['seen'] is True
++    assert len(db.table('logs')) == 2
++
++
++def test_ac2_reads_see_changes_in_batch():
++    db = TinyDB(storage=MemoryStorage)
++    db.insert({'a': 1})
++    db.insert({'a': 2})
++    with db.batch():
++        new_id = db.insert({'a': 3})
++        db.update({'a': 10}, Query().a == 1)
++        assert db.count(Query().a == 3) == 1
++        assert db.count(Query().a == 10) == 1
++        assert db.count(Query().a == 1) == 0
++        assert len(db.search(Query().a > 1)) == 3
++        assert db.get(doc_id=new_id)['a'] == 3
++        assert db.get(Query().a == 10) is not None
++
++
++def test_ac3_exception_rolls_back():
++    CountingStorage.writes = 0
++    db = TinyDB(storage=CountingStorage)
++    db.insert({'a': 1})
++    db.table('logs').insert({'id': 1})
++    CountingStorage.writes = 0
++    before = _snapshot(db)
++    raw_before = repr(db.storage.read())
++
++    with pytest.raises(ValueError):
++        with db.batch():
++            db.insert({'a': 2})
++            db.update({'a': 9}, Query().a == 1)
++            db.table('logs').insert({'id': 2})
++            db.table('logs').remove(Query().id == 1)
++            raise ValueError('boom')
++
++    assert CountingStorage.writes == 0
++    assert repr(db.storage.read()) == raw_before
++    assert _snapshot(db) == before
++    assert db.insert({'a': 100}) == 2
++    assert db.table('logs').insert({'id': 100}) == 2
++
++
++def test_ac4_nested_and_empty_batches():
++    CountingStorage.writes = 0
++    db = TinyDB(storage=CountingStorage)
++    db.insert({'a': 0})
++    CountingStorage.writes = 0
++
++    with db.batch():
++        db.insert({'a': 1})
++        with db.batch():
++            db.insert({'a': 2})
++        assert CountingStorage.writes == 0
++        db.insert({'a': 3})
++    assert CountingStorage.writes == 1
++    assert len(db) == 4
++
++    CountingStorage.writes = 0
++    with db.batch():
++        db.all()
++        db.search(Query().a == 1)
++    with db.batch():
++        with db.batch():
++            pass
++    assert CountingStorage.writes == 0
++
++
++def test_ac5_caching_middleware():
++    storage = CachingMiddleware(MemoryStorage)
++    db = TinyDB(storage=storage)
++    db.insert({'a': 1})
++
++    with db.batch():
++        db.insert({'a': 2})
++        db.table('logs').insert({'id': 1})
++    assert len(db) == 2
++    assert len(db.table('logs')) == 1
++
++    with pytest.raises(RuntimeError):
++        with db.batch():
++            db.insert({'a': 3})
++            db.update({'a': 50}, Query().a == 1)
++            raise RuntimeError('x')
++    assert sorted(d['a'] for d in db.all()) == [1, 2]
++    assert db.insert({'a': 4}) == 3
+diff --git a/tinydb/database.py b/tinydb/database.py
+index 0cd2b7e..7a48d14 100644
+--- a/tinydb/database.py
++++ b/tinydb/database.py
+@@ -2,7 +2,9 @@
+ This module contains the main component of TinyDB: the database.
+ """
+ 
++import copy
+ from collections.abc import Iterator
++from contextlib import contextmanager
+ 
+ from . import JSONStorage
+ from .storages import Storage
+@@ -14,6 +16,45 @@ from .utils import with_typehint
+ TableBase: type[Table] = with_typehint(Table)
+ 
+ 
++class _Batch:
++    """
++    State of a :meth:`TinyDB.batch` shared by all tables of a database.
++    """
++
++    def __init__(self) -> None:
++        self.depth = 0
++        self.failed = False
++        self.original = None
++        self.data = None
++        self.next_ids: dict = {}
++
++    def begin(self, storage: Storage, tables: dict) -> None:
++        if self.depth == 0:
++            self.failed = False
++            self.original = storage.read()
++            self.data = copy.deepcopy(self.original)
++            if self.data is None:
++                self.data = {}
++            self.next_ids = {n: t._next_id for n, t in tables.items()}
++        self.depth += 1
++
++    def commit(self, storage: Storage) -> None:
++        # Only write if something actually changed
++        if self.data != (self.original or {}):
++            storage.write(self.data)
++
++    def rollback(self, tables: dict) -> None:
++        for name, table in tables.items():
++            table._next_id = self.next_ids.get(name)
++            table.clear_cache()
++
++    def reset(self) -> None:
++        self.depth = 0
++        self.original = None
++        self.data = None
++        self.next_ids = {}
++
++
+ class TinyDB(TableBase):
+     """
+     The main class of TinyDB.
+@@ -96,6 +137,7 @@ class TinyDB(TableBase):
+ 
+         self._opened = True
+         self._tables: dict[str, Table] = {}
++        self._batch_state = _Batch()
+ 
+     def __repr__(self):
+ 
+@@ -128,10 +170,51 @@ class TinyDB(TableBase):
+             return self._tables[name]
+ 
+         table = self.table_class(self.storage, name, **kwargs)
++        table._batch = self._batch_state
+         self._tables[name] = table
+ 
+         return table
+ 
++    @contextmanager
++    def batch(self):
++        """
++        Group several write operations into a single storage write.
++
++        Changes made inside the block are visible to reads inside the block
++        but are only written to the storage once, when the outermost block
++        exits (and only if something changed). If an exception is raised,
++        nothing is written and the database behaves as if the block never ran.
++        Nested ``batch()`` blocks are part of the outer one.
++
++        Dropping tables inside a batch is not supported.
++        """
++
++        state = self._batch_state
++        state.begin(self.storage, self._tables)
++        try:
++            yield self
++        except BaseException:
++            state.failed = True
++            raise
++        finally:
++            state.depth -= 1
++            if state.depth == 0:
++                # Keep the batch active while committing is decided, but
++                # make sure the state is always reset afterwards.
++                try:
++                    if state.failed:
++                        state.rollback(self._tables)
++                    else:
++                        try:
++                            state.commit(self.storage)
++                        except BaseException:
++                            state.rollback(self._tables)
++                            raise
++                        for table in self._tables.values():
++                            table.clear_cache()
++                finally:
++                    state.reset()
++
+     def tables(self) -> set[str]:
+         """
+         Get the names of all tables in the database.
+diff --git a/tinydb/table.py b/tinydb/table.py
+index 76470aa..00ff9e8 100644
+--- a/tinydb/table.py
++++ b/tinydb/table.py
+@@ -91,6 +91,9 @@ class Table:
+     #: .. versionadded:: 4.0
+     default_query_cache_capacity = 10
+ 
++    # Batch state shared by all tables of a database (set by ``TinyDB.table``)
++    _batch = None
++
+     def __init__(
+         self,
+         storage: Storage,
+@@ -776,6 +779,24 @@ class Table:
+ 
+         return next_id
+ 
++    def _read_all(self):
++        """
++        Read the data of all tables, from the active batch if there is one.
++        """
++        if self._batch is not None and self._batch.depth:
++            return self._batch.data
++
++        return self._storage.read()
++
++    def _write_all(self, data) -> None:
++        """
++        Write the data of all tables, to the active batch if there is one.
++        """
++        if self._batch is not None and self._batch.depth:
++            self._batch.data = data
++        else:
++            self._storage.write(data)
++
+     def _read_table(self) -> dict[str, Mapping]:
+         """
+         Read the table data from the underlying storage.
+@@ -786,7 +807,7 @@ class Table:
+         """
+ 
+         # Retrieve the tables from the storage
+-        tables = self._storage.read()
++        tables = self._read_all()
+ 
+         if tables is None:
+             # The database is empty
+@@ -815,7 +836,7 @@ class Table:
+         document class, as the table data will *not* be returned to the user.
+         """
+ 
+-        tables = self._storage.read()
++        tables = self._read_all()
+ 
+         if tables is None:
+             # The database is empty
+@@ -848,7 +869,7 @@ class Table:
+         }
+ 
+         # Write the newly updated data back to the storage
+-        self._storage.write(tables)
++        self._write_all(tables)
+ 
+         # Clear the query cache, as the table contents have changed
+         self.clear_cache()

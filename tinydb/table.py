@@ -91,6 +91,9 @@ class Table:
     #: .. versionadded:: 4.0
     default_query_cache_capacity = 10
 
+    # Batch state shared by all tables of a database (set by ``TinyDB.table``)
+    _batch = None
+
     def __init__(
         self,
         storage: Storage,
@@ -776,6 +779,24 @@ class Table:
 
         return next_id
 
+    def _read_all(self):
+        """
+        Read the data of all tables, from the active batch if there is one.
+        """
+        if self._batch is not None and self._batch.depth:
+            return self._batch.data
+
+        return self._storage.read()
+
+    def _write_all(self, data) -> None:
+        """
+        Write the data of all tables, to the active batch if there is one.
+        """
+        if self._batch is not None and self._batch.depth:
+            self._batch.data = data
+        else:
+            self._storage.write(data)
+
     def _read_table(self) -> dict[str, Mapping]:
         """
         Read the table data from the underlying storage.
@@ -786,7 +807,7 @@ class Table:
         """
 
         # Retrieve the tables from the storage
-        tables = self._storage.read()
+        tables = self._read_all()
 
         if tables is None:
             # The database is empty
@@ -815,7 +836,7 @@ class Table:
         document class, as the table data will *not* be returned to the user.
         """
 
-        tables = self._storage.read()
+        tables = self._read_all()
 
         if tables is None:
             # The database is empty
@@ -848,7 +869,7 @@ class Table:
         }
 
         # Write the newly updated data back to the storage
-        self._storage.write(tables)
+        self._write_all(tables)
 
         # Clear the query cache, as the table contents have changed
         self.clear_cache()
