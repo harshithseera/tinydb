@@ -10,7 +10,7 @@ import re
 import shutil
 import sys
 
-from common import (BUILDER_ALLOWED, BUILDER_TOOLS, REPO, RUN_URL, fetch_issue, gh,
+from common import (BUILDER_ALLOWED, BUILDER_TOOLS, REPO, RUN_URL, agent_env, fetch_issue, gh,
                     gh_output, load_prompt, log, run_agent, sh, untrusted_issue,
                     usage_summary)
 
@@ -110,7 +110,8 @@ class Run:
         if bad:
             return False, f"Changed files outside {ALLOWED_PREFIXES}: {bad}"
         for cmd in (["python", "-m", "compileall", "-q", "tinydb"], ["python", "-c", "import tinydb"]):
-            r = sh(cmd, cwd=self.work, check=False)
+            # Agent-written code: run without GitHub tokens in the environment (ADR-005/009).
+            r = sh(cmd, cwd=self.work, check=False, env=agent_env())
             if r.returncode != 0:
                 return False, f"Build check `{' '.join(cmd)}` failed:\n```\n{(r.stdout + r.stderr)[-3000:]}\n```"
         return True, ""
@@ -123,8 +124,9 @@ class Run:
             names=", ".join(f"test_ac{n}_<what>" for n in ac_ids)))
         tests_text = "\n".join(p.read_text(errors="ignore") for p in (self.work / "tests").rglob("*.py"))
         missing = [n for n in ac_ids if not re.search(rf"def test_ac{n}(_|\()", tests_text)]
+        # Runs tests the agent wrote: never expose GitHub tokens to them (ADR-005/009).
         r = sh(["python", "-m", "pytest", "-p", "no:cacheprovider", "-q", "--no-cov", "-rf"],
-               cwd=self.work, check=False, timeout=600)
+               cwd=self.work, check=False, timeout=600, env=agent_env())
         out = (r.stdout + r.stderr)[-6000:]
         passed = r.returncode == 0 and not missing
         report = [f"# Test report — issue #{self.issue}", "",
