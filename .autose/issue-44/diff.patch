@@ -1,0 +1,104 @@
+diff --git a/docs/usage.rst b/docs/usage.rst
+index 9d61f5c..f6b4e2a 100644
+--- a/docs/usage.rst
++++ b/docs/usage.rst
+@@ -312,6 +312,8 @@ with these operations:
+ - ``delete(key)``: delete a key from the document
+ - ``increment(key)``: increment the value of a key
+ - ``decrement(key)``: decrement the value of a key
++- ``toggle(key)``: flip a boolean value (raises an error if the key is
++  missing or the value is not a ``bool``)
+ - ``add(key, value)``: add ``value`` to the value of a key (also works for strings)
+ - ``subtract(key, value)``: subtract ``value`` from the value of a key
+ - ``set(key, value)``: set ``key`` to ``value``
+diff --git a/tests/test_autose_issue.py b/tests/test_autose_issue.py
+new file mode 100644
+index 0000000..9319d65
+--- /dev/null
++++ b/tests/test_autose_issue.py
+@@ -0,0 +1,58 @@
++import pytest
++
++from tinydb import TinyDB, where
++from tinydb.operations import toggle
++from tinydb.storages import MemoryStorage
++
++
++def make_db():
++    return TinyDB(storage=MemoryStorage)
++
++
++def test_ac1_toggle_flips_bool_back_and_forth():
++    db = make_db()
++    db.insert({'done': False})
++
++    db.update(toggle('done'))
++    assert db.all()[0]['done'] is True
++
++    db.update(toggle('done'))
++    assert db.all()[0]['done'] is False
++
++
++def test_ac2_toggle_only_affects_matching_documents():
++    db = make_db()
++    db.insert_multiple([
++        {'name': 'a', 'done': False},
++        {'name': 'b', 'done': False},
++        {'name': 'c', 'done': True},
++    ])
++
++    db.update(toggle('done'), where('name') == 'a')
++
++    assert db.get(where('name') == 'a')['done'] is True
++    assert db.get(where('name') == 'b')['done'] is False
++    assert db.get(where('name') == 'c')['done'] is True
++
++
++def test_ac3_toggle_missing_field_raises_and_leaves_doc_unchanged():
++    db = make_db()
++    db.insert({'name': 'a'})
++
++    with pytest.raises(Exception):
++        db.update(toggle('done'))
++
++    assert db.all() == [{'name': 'a'}]
++
++
++@pytest.mark.parametrize('value', [1, 0, 'yes', None])
++def test_ac4_toggle_non_bool_raises_and_leaves_value_unchanged(value):
++    db = make_db()
++    db.insert({'done': value})
++
++    with pytest.raises(Exception):
++        db.update(toggle('done'))
++
++    stored = db.all()[0]['done']
++    assert stored == value
++    assert type(stored) is type(value)
+diff --git a/tinydb/operations.py b/tinydb/operations.py
+index 3f6c6ab..67e9349 100644
+--- a/tinydb/operations.py
++++ b/tinydb/operations.py
+@@ -73,3 +73,22 @@ def decrement(field: str) -> Callable[[MutableMapping], None]:
+         doc[field] -= 1
+ 
+     return transform
++
++
++def toggle(field: str) -> Callable[[MutableMapping], None]:
++    """
++    Flip a boolean field in the document.
++
++    Raises ``KeyError`` if the field is missing and ``TypeError`` if its
++    value is not a ``bool``.
++    """
++    def transform(doc: MutableMapping):
++        value = doc[field]
++        if type(value) is not bool:
++            raise TypeError(
++                f'Cannot toggle field {field!r}: expected bool, '
++                f'got {type(value).__name__}'
++            )
++        doc[field] = not value
++
++    return transform
